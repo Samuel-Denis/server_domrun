@@ -36,7 +36,7 @@ export class WeeklyClosureService {
     console.log(`🔒 Fechando semana ${previousWeekKey}...`);
 
     // Buscar todas as salas da semana anterior que ainda estão abertas
-    const rooms = await this.prisma.client.weeklyRoom.findMany({
+    const rooms = await this.prisma.weeklyRoom.findMany({
       where: {
         weekKey: previousWeekKey,
         status: { in: ['OPEN', 'IN_PROGRESS'] },
@@ -59,9 +59,9 @@ export class WeeklyClosureService {
    * Processa o fechamento de uma sala específica
    */
   private async processRoomClosure(roomId: string, league: any): Promise<void> {
-    await this.prisma.client.$transaction(async (tx) => {
+    await this.prisma.$transaction(async (tx) => {
       // 1. Buscar participantes
-      const participants = await tx.weeklyRoomParticipant.findMany({
+      const participants = await this.prisma.weeklyRoomParticipant.findMany({
         where: { roomId },
       });
 
@@ -71,14 +71,14 @@ export class WeeklyClosureService {
       }
 
       // 3. Calcular bônus de consistência semanal
-      await this.calculateConsistencyBonuses(roomId, league, tx);
+      await this.calculateConsistencyBonuses(roomId, league);
 
       // 4. Buscar participantes atualizados com pontuações recalculadas para desempate
 
       // Calcular melhor corrida e pace médio para cada participante
       const participantsWithTiebreaker = await Promise.all(
         participants.map(async (p) => {
-          const countedRuns = await tx.weeklyRun.findMany({
+            const countedRuns = await this.prisma.weeklyRun.findMany({
             where: {
               participantId: p.id,
               isValid: true,
@@ -158,7 +158,7 @@ export class WeeklyClosureService {
             }
           } else if (position > updatedParticipants.length - DEMOTION_BOTTOM) {
             // Rebaixar (exceto Starter que nunca rebaixa)
-            const currentLeague = await tx.league.findUnique({
+            const currentLeague = await this.prisma.league.findUnique({
               where: { id: participantData.startingLeagueId },
             });
 
@@ -173,7 +173,7 @@ export class WeeklyClosureService {
         } else {
           // Sem mínimo de corridas: pode rebaixar mas não promove
           if (position > updatedParticipants.length - DEMOTION_BOTTOM) {
-            const currentLeague = await tx.league.findUnique({
+            const currentLeague = await this.prisma.league.findUnique({
               where: { id: participantData.startingLeagueId },
             });
 
@@ -188,7 +188,7 @@ export class WeeklyClosureService {
         }
 
         // Atualizar participante
-        await tx.weeklyRoomParticipant.update({
+        await this.prisma.weeklyRoomParticipant.update({
           where: { id: participant.id },
           data: {
             position,
@@ -200,14 +200,14 @@ export class WeeklyClosureService {
         });
 
         // Atualizar liga do usuário
-        await tx.user.update({
+        await this.prisma.user.update({
           where: { id: participant.userId },
           data: { leagueId: newLeagueId },
         });
       }
 
       // 8. Marcar sala como FINISHED
-      await tx.weeklyRoom.update({
+      await this.prisma.weeklyRoom.update({
         where: { id: roomId },
         data: { status: 'FINISHED' },
       });
@@ -223,15 +223,14 @@ export class WeeklyClosureService {
   private async calculateConsistencyBonuses(
     roomId: string,
     league: any,
-    tx: any,
   ): Promise<void> {
-    const participants = await tx.weeklyRoomParticipant.findMany({
+    const participants = await this.prisma.weeklyRoomParticipant.findMany({
       where: { roomId },
     });
 
     for (const participant of participants) {
       // Buscar corridas válidas do participante
-      const runs = await tx.weeklyRun.findMany({
+      const runs = await this.prisma.weeklyRun.findMany({
         where: {
           participantId: participant.id,
           isValid: true,
@@ -260,7 +259,7 @@ export class WeeklyClosureService {
 
       const consistencyBonus = Math.round(league.weeklyConsistencyMaxBonus * bonusPercentage);
 
-      await tx.weeklyRoomParticipant.update({
+      await this.prisma.weeklyRoomParticipant.update({
         where: { id: participant.id },
         data: { consistencyBonus },
       });

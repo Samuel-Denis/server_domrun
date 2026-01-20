@@ -8,45 +8,45 @@ export class StatsService {
 
   async calculateUserStats(userId: string) {
     // Total distance (em KM)
-    const totalDistanceResult = await this.prisma.client.run.aggregate({
+    const totalDistanceResult = await this.prisma.run.aggregate({
       where: { userId },
       _sum: { distance: true },
     });
     const totalDistance = (totalDistanceResult._sum.distance || 0) / 1000.0; // converter de metros para KM
 
     // Total runs
-    const totalRuns = await this.prisma.client.run.count({
+    const totalRuns = await this.prisma.run.count({
       where: { userId },
     });
 
     // Total territories
-    const totalTerritories = await this.prisma.client.territory.count({
+    const totalTerritories = await this.prisma.territory.count({
       where: { userId },
     });
 
     // Average pace (em min/km)
-    const avgPaceResult = await this.prisma.client.run.aggregate({
+    const avgPaceResult = await this.prisma.run.aggregate({
       where: { userId },
       _avg: { averagePace: true },
     });
     const averagePace = avgPaceResult._avg.averagePace || 0;
 
     // Total time (em segundos)
-    const totalTimeResult = await this.prisma.client.run.aggregate({
+    const totalTimeResult = await this.prisma.run.aggregate({
       where: { userId },
       _sum: { duration: true },
     });
     const totalTime = totalTimeResult._sum.duration || 0;
 
     // Longest run (em KM)
-    const longestRunResult = await this.prisma.client.run.aggregate({
+    const longestRunResult = await this.prisma.run.aggregate({
       where: { userId },
       _max: { distance: true },
     });
     const longestRun = (longestRunResult._max.distance || 0) / 1000.0; // converter de metros para KM
 
     // Territory area (área total dominada)
-    const territoryAreaResult = await this.prisma.client.territory.aggregate({
+    const territoryAreaResult = await this.prisma.territory.aggregate({
       where: { userId },
       _sum: { area: true },
     });
@@ -54,7 +54,7 @@ export class StatsService {
     const totalTerritoryAreaKm2 = totalTerritoryAreaM2 / 1000000; // converter m² para km²
 
     // Trophies (achievements completed)
-    const trophies = await this.prisma.client.userAchievement.count({
+    const trophies = await this.prisma.userAchievement.count({
       where: {
         userId,
         status: AchievementStatus.CLAIMED,
@@ -81,7 +81,7 @@ export class StatsService {
 
   private async calculateCurrentStreak(userId: string): Promise<number> {
     // Buscar todas as corridas ordenadas por data
-    const runs = await this.prisma.client.run.findMany({
+      const runs = await this.prisma.run.findMany({
       where: { userId },
       orderBy: { startTime: 'desc' },
       select: { startTime: true },

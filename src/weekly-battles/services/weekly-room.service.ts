@@ -28,7 +28,7 @@ export class WeeklyRoomService {
     console.log(`📅 Criando salas semanais para ${weekKey} (Season ${seasonNumber}, Week ${weekNumber})`);
 
     // Buscar todas as inscrições desta semana, agrupadas por liga
-    const enrollments = await this.prisma.client.weeklyEnrollment.findMany({
+    const enrollments = await this.prisma.weeklyEnrollment.findMany({
       where: { weekKey },
       include: {
         user: {
@@ -112,10 +112,9 @@ export class WeeklyRoomService {
     for (let roomNumber = 1; roomNumber <= batches.length; roomNumber++) {
       const userIds = batches[roomNumber - 1];
 
-      await this.prisma.client.$transaction(async (tx) => {
         // Verificar se sala já existe (idempotência)
         // Usar findFirst pois Prisma precisa do nome da constraint composta
-        const existingRoom = await tx.weeklyRoom.findFirst({
+        const existingRoom = await this.prisma.weeklyRoom.findFirst({
           where: {
             leagueId,
             seasonNumber,
@@ -130,7 +129,7 @@ export class WeeklyRoomService {
         }
 
         // Criar sala com período competitivo (Terça 00:00 → Domingo 23:59)
-        const room = await tx.weeklyRoom.create({
+        const room = await this.prisma.weeklyRoom.create({
           data: {
             leagueId,
             seasonNumber,
@@ -146,7 +145,7 @@ export class WeeklyRoomService {
         // Criar participantes (usar leagueId do snapshot da inscrição)
         for (const userId of userIds) {
           // Buscar inscrição para obter leagueId no momento da inscrição
-          const enrollment = await tx.weeklyEnrollment.findUnique({
+          const enrollment = await this.prisma.weeklyEnrollment.findUnique({
             where: {
               userId_weekKey: {
                 userId,
@@ -156,7 +155,7 @@ export class WeeklyRoomService {
           });
 
           if (enrollment) {
-            await tx.weeklyRoomParticipant.create({
+            await this.prisma.weeklyRoomParticipant.create({
               data: {
                 roomId: room.id,
                 userId,
@@ -168,7 +167,6 @@ export class WeeklyRoomService {
         }
 
         console.log(`✅ Sala ${room.id} criada com ${userIds.length} participantes`);
-      });
     }
   }
 
@@ -178,7 +176,7 @@ export class WeeklyRoomService {
   async getCurrentRoom(userId: string): Promise<any | null> {
     const weekKey = generateWeekKey();
 
-    const participant = await this.prisma.client.weeklyRoomParticipant.findFirst({
+    const participant = await this.prisma.weeklyRoomParticipant.findFirst({
       where: {
         userId,
         room: {
@@ -202,7 +200,7 @@ export class WeeklyRoomService {
     }
 
     const room = participant.room;
-    const participantsCount = await this.prisma.client.weeklyRoomParticipant.count({
+    const participantsCount = await this.prisma.weeklyRoomParticipant.count({
       where: { roomId: room.id },
     });
 
@@ -222,7 +220,7 @@ export class WeeklyRoomService {
    * Busca ranking da sala
    */
   async getRoomRanking(roomId: string): Promise<any | null> {
-    const room = await this.prisma.client.weeklyRoom.findUnique({
+    const room = await this.prisma.weeklyRoom.findUnique({
       where: { id: roomId },
       include: {
         league: true,
@@ -233,7 +231,7 @@ export class WeeklyRoomService {
       throw new NotFoundException('Sala não encontrada');
     }
 
-    const participants = await this.prisma.client.weeklyRoomParticipant.findMany({
+    const participants = await this.prisma.weeklyRoomParticipant.findMany({
       where: { roomId },
       include: {
         user: {

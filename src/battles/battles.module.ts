@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BattlesController } from './battles.controller';
 import { BattleService } from './services/battle.service';
 import { BattleScoreService } from './services/battle-score.service';
@@ -14,9 +15,21 @@ import { JwtModule } from '@nestjs/jwt';
   imports: [
     PrismaModule,
     forwardRef(() => UsersModule), // Para usar XpService
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'seu-secret-key-aqui-mude-em-producao',
-      signOptions: { expiresIn: '7d' },
+    // JwtModule configurado via ConfigService (sem fallbacks hardcoded)
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => {
+        // JWT_SECRET é obrigatório e já validado na etapa anterior (env.validation.ts)
+        const jwtSecret = configService.get<string>('JWT_SECRET');
+        if (!jwtSecret) {
+          throw new Error('JWT_SECRET não encontrado. Verifique a configuração do ConfigModule.');
+        }
+        return {
+          secret: jwtSecret,
+          signOptions: { expiresIn: '7d' },
+        };
+      },
+      inject: [ConfigService],
     }),
   ],
   controllers: [BattlesController],

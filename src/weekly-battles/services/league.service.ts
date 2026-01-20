@@ -12,7 +12,7 @@ export class LeagueService {
    * Busca todas as ligas ordenadas
    */
   async findAll(): Promise<any[]> {
-    return this.prisma.client.league.findMany({
+    return this.prisma.league.findMany({
       orderBy: { order: 'asc' },
     });
   }
@@ -21,7 +21,7 @@ export class LeagueService {
    * Busca liga por código
    */
   async findByCode(code: string): Promise<any | null> {
-    return this.prisma.client.league.findUnique({
+    return this.prisma.league.findUnique({
       where: { code },
     });
   }
@@ -30,7 +30,7 @@ export class LeagueService {
    * Busca liga por ID
    */
   async findById(id: string): Promise<any | null> {
-    return this.prisma.client.league.findUnique({
+    return this.prisma.league.findUnique({
       where: { id },
     });
   }
@@ -46,7 +46,7 @@ export class LeagueService {
     }
 
     // Buscar ligas em ordem decrescente (do mais alto para o mais baixo)
-    const leagues = await this.prisma.client.league.findMany({
+    const leagues = await this.prisma.league.findMany({
       where: { isChampion: false },
       orderBy: { order: 'desc' },
     });
@@ -69,7 +69,7 @@ export class LeagueService {
       return currentLeague;
     }
 
-    return this.prisma.client.league.findFirst({
+    return this.prisma.league.findFirst({
       where: { order: currentLeague.order - 1, isChampion: false },
     });
   }
@@ -83,7 +83,7 @@ export class LeagueService {
       return null; // Imortal não tem próxima liga
     }
 
-    return this.prisma.client.league.findFirst({
+    return this.prisma.league.findFirst({
       where: { order: currentLeague.order + 1, isChampion: false },
     });
   }

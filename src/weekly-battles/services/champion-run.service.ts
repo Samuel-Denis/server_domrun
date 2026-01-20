@@ -30,7 +30,7 @@ export class ChampionRunService {
     }
 
     // 2. Validar que o usuário está na liga Imortal
-    const user = await this.prisma.client.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { league: true },
     });
@@ -40,7 +40,7 @@ export class ChampionRunService {
     }
 
     // 3. Buscar a corrida no sistema principal
-    const run = await this.prisma.client.run.findUnique({
+    const run = await this.prisma.run.findUnique({
       where: { id: runId },
       include: {
         pathPoints: {
@@ -68,7 +68,7 @@ export class ChampionRunService {
     }
 
     // 5. Verificar se a corrida já foi submetida
-    const existingRun = await this.prisma.client.championRun.findUnique({
+    const existingRun = await this.prisma.championRun.findUnique({
       where: {
         userId_runId: {
           userId,
@@ -103,7 +103,7 @@ export class ChampionRunService {
       : 0;
 
     // 10. Criar ChampionRun
-    const championRun = await this.prisma.client.championRun.create({
+    const championRun = await this.prisma.championRun.create({
       data: {
         userId,
         runId,
@@ -121,7 +121,7 @@ export class ChampionRunService {
 
     // 11. Atualizar troféus do usuário (se válido)
     if (antiCheatResult.isValid && trophiesEarned > 0) {
-      await this.prisma.client.user.update({
+      await this.prisma.user.update({
         where: { id: userId },
         data: {
           trophies: {
@@ -158,7 +158,7 @@ export class ChampionRunService {
       return;
     }
 
-    const users = await this.prisma.client.user.findMany({
+    const users = await this.prisma.user.findMany({
       where: { leagueId: immortalLeague.id },
     });
 
@@ -196,9 +196,8 @@ export class ChampionRunService {
     minValidRuns: number,
     penaltyTrophies: number,
   ): Promise<void> {
-    await this.prisma.client.$transaction(async (tx) => {
       // Buscar corridas válidas da semana
-      const runs = await tx.championRun.findMany({
+      const runs = await this.prisma.championRun.findMany({
         where: {
           userId,
           submittedAt: {
@@ -213,7 +212,7 @@ export class ChampionRunService {
       const trophiesEarnedWeek = runs.reduce((sum, run) => sum + run.trophiesEarned, 0);
 
       // Buscar usuário atual
-      const user = await tx.user.findUnique({
+      const user = await this.prisma.user.findUnique({
         where: { id: userId },
       });
 
@@ -233,7 +232,7 @@ export class ChampionRunService {
         trophiesAfter = Math.max(0, trophiesBefore - penaltyTrophies);
 
         // Aplicar penalidade
-        await tx.user.update({
+        await this.prisma.user.update({
           where: { id: userId },
           data: { trophies: trophiesAfter },
         });
@@ -246,7 +245,7 @@ export class ChampionRunService {
           demoted = true;
           demotedToLeagueId = eliteLeague.id;
 
-          await tx.user.update({
+          await this.prisma.user.update({
             where: { id: userId },
             data: { leagueId: eliteLeague.id },
           });
@@ -254,7 +253,7 @@ export class ChampionRunService {
       }
 
       // Criar ou atualizar resumo semanal
-      await tx.championWeeklySummary.upsert({
+        await this.prisma.championWeeklySummary.upsert({
         where: {
           userId_seasonNumber_weekNumber: {
             userId,
@@ -285,8 +284,7 @@ export class ChampionRunService {
           trophiesAfter,
           demoted,
           demotedToLeagueId,
-        },
-      });
+      },
     });
   }
 }

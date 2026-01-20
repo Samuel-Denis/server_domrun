@@ -27,7 +27,7 @@ export class WeeklyEnrollmentService {
     }
 
     // 2. Buscar usuário e verificar se tem liga (não pode ser Imortal)
-    const user = await this.prisma.client.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { league: true },
     });
@@ -49,7 +49,7 @@ export class WeeklyEnrollmentService {
     const { seasonNumber, weekNumber } = parseWeekKey(nextWeekKey);
 
     // 4. Verificar se já está inscrito
-    const existingEnrollment = await this.prisma.client.weeklyEnrollment.findUnique({
+    const existingEnrollment = await this.prisma.weeklyEnrollment.findUnique({
       where: {
         userId_weekKey: {
           userId,
@@ -63,7 +63,7 @@ export class WeeklyEnrollmentService {
     }
 
     // 5. Criar inscrição
-    const enrollment = await this.prisma.client.weeklyEnrollment.create({
+    const enrollment = await this.prisma.weeklyEnrollment.create({
       data: {
         userId,
         weekKey: nextWeekKey,
@@ -95,7 +95,7 @@ export class WeeklyEnrollmentService {
       throw new BadRequestException('Só é possível cancelar inscrição durante o período de inscrição (segunda-feira)');
     }
 
-    const enrollment = await this.prisma.client.weeklyEnrollment.findUnique({
+    const enrollment = await this.prisma.weeklyEnrollment.findUnique({
       where: {
         userId_weekKey: {
           userId,
@@ -108,7 +108,7 @@ export class WeeklyEnrollmentService {
       throw new NotFoundException('Inscrição não encontrada');
     }
 
-    await this.prisma.client.weeklyEnrollment.delete({
+    await this.prisma.weeklyEnrollment.delete({
       where: { id: enrollment.id },
     });
   }
@@ -117,7 +117,7 @@ export class WeeklyEnrollmentService {
    * Verifica se usuário está inscrito para uma semana
    */
   async isUserEnrolled(userId: string, weekKey: string): Promise<boolean> {
-    const enrollment = await this.prisma.client.weeklyEnrollment.findUnique({
+    const enrollment = await this.prisma.weeklyEnrollment.findUnique({
       where: {
         userId_weekKey: {
           userId,
@@ -133,7 +133,7 @@ export class WeeklyEnrollmentService {
    * Busca todas as inscrições de uma semana específica
    */
   async getEnrollmentsForWeek(weekKey: string): Promise<any[]> {
-    return this.prisma.client.weeklyEnrollment.findMany({
+    return this.prisma.weeklyEnrollment.findMany({
       where: { weekKey },
       include: {
         user: {
@@ -162,7 +162,7 @@ export class WeeklyEnrollmentService {
    * Busca inscrições de um usuário
    */
   async getUserEnrollments(userId: string): Promise<any[]> {
-    return this.prisma.client.weeklyEnrollment.findMany({
+    return this.prisma.weeklyEnrollment.findMany({
       where: { userId },
       include: {
         league: {

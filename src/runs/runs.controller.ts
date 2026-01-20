@@ -5,6 +5,11 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { CreateTerritoryDto } from './dto/create-territory.dto';
 import { CreateRunDto } from './dto/create-run.dto';
 import { plainToInstance } from 'class-transformer';
+import {
+    geoJsonLineStringToBoundaryPoints,
+    simplifyBoundaryPointsByDistance,
+  } from '../common/gis/gis.helpers';
+import * as turf from '@turf/turf';
 
 @Controller('runs')
 export class RunsController {
@@ -71,7 +76,7 @@ export class RunsController {
         }
 
         // Converter formato GeoJSON para formato esperado se necessário
-        if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
+    /*    if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
             // É formato GeoJSON: { type: "LineString", coordinates: [[lng, lat], ...] }
             if (dataToParse.boundary.type === 'LineString' && Array.isArray(dataToParse.boundary.coordinates)) {
                 console.log('🔄 Convertendo GeoJSON para formato esperado...');
@@ -93,7 +98,26 @@ export class RunsController {
             } else {
                 throw new BadRequestException('Formato GeoJSON inválido: boundary deve ter type="LineString" e coordinates array');
             }
-        }
+        }*/
+
+            // Converter formato GeoJSON -> formato esperado (BoundaryPoint[]) se necessário
+if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
+    try {
+      console.log('🔄 Convertendo GeoJSON(LineString) para formato esperado...');
+      const converted = geoJsonLineStringToBoundaryPoints(dataToParse.boundary, {
+        capturedAt: dataToParse.capturedAt,
+        generateTimestamps: true,
+      });
+  
+      // Simplificação leve para reduzir pontos muito próximos (opcional/segura)
+      // Ajuste o minDistanceMeters se quiser mais ou menos agressivo.
+      dataToParse.boundary = simplifyBoundaryPointsByDistance(converted, 3);
+      console.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
+    } catch (err: any) {
+      throw new BadRequestException(err?.message || 'Formato GeoJSON inválido para boundary');
+    }
+  }
+  
 
         // Verificar boundary ANTES de converter para DTO
         if (dataToParse.boundary && Array.isArray(dataToParse.boundary) && dataToParse.boundary.length > 0) {
