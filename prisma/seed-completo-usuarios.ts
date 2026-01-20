@@ -1,4 +1,4 @@
-import { PrismaClient, AchievementStatus } from '@prisma/client';
+import { PrismaClient, AchievementStatus, Prisma } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as dotenv from 'dotenv';
@@ -349,24 +349,16 @@ async function main() {
             const boundaryWKT = pointsToPolygonWKT(boundaryPoints.map(p => ({ lat: p.lat, lng: p.lng })));
 
             // Calcular área usando PostGIS
-            const areaResult = await prisma.$queryRawUnsafe<Array<{ area: number }>>(
-                `SELECT ST_Area(ST_Transform(ST_GeomFromText($1, 4326), 3857)) as area`,
-                boundaryWKT
+            const areaResult = await prisma.$queryRaw<Array<{ area: number }>>(
+                Prisma.sql`SELECT ST_Area(ST_Transform(ST_GeomFromText(${boundaryWKT}, 4326), 3857)) as area`
             );
             const area = areaResult[0]?.area || 0;
 
             const capturedAt = new Date(Date.now() - Math.random() * 90 * 24 * 3600000); // Últimos 90 dias
 
-            await prisma.$executeRawUnsafe(
-                `INSERT INTO territories (id, "userId", "userName", "userColor", "areaName", area, "capturedAt", geometry, "createdAt", "updatedAt")
-                 VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, ST_GeomFromText($7, 4326), NOW(), NOW())`,
-                userData.id,
-                userData.name,
-                userData.color,
-                `${route.name}`,
-                area,
-                capturedAt,
-                boundaryWKT
+            await prisma.$executeRaw(
+                Prisma.sql`INSERT INTO territories (id, "userId", "userName", "userColor", "areaName", area, "capturedAt", geometry, "createdAt", "updatedAt")
+                 VALUES (gen_random_uuid(), ${userData.id}, ${userData.name}, ${userData.color}, ${route.name}, ${area}, ${capturedAt}, ST_GeomFromText(${boundaryWKT}, 4326), NOW(), NOW())`
             );
         }
 
