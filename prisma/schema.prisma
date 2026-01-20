@@ -1,0 +1,668 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [postgis]
+}
+
+// ============================================
+// MODELO: User (atualizado com leagueId FK)
+// ============================================
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  color        String    @default("#FF0000")
+  biography    String?
+  photoUrl     String?
+  lastLogin    DateTime?
+  level        Int       @default(1)
+  xp           Int       @default(0)
+  trophies     Int       @default(0)
+  winStreak    Int       @default(0)
+  battleWins   Int       @default(0)
+  battleLosses Int       @default(0)
+
+  // RELACIONAMENTO COM LEAGUE (FK em vez de String)
+  leagueId String?
+  league   League? @relation(fields: [leagueId], references: [id], onDelete: SetNull)
+
+  territories             Territory[]
+  refreshTokens           RefreshToken[]
+  runs                    Run[]
+  userAchievements        UserAchievement[]
+  userAchievementProgress UserAchievementProgress[]
+
+  // Relação com Achievement através de UserAchievement (indireta)
+  battlesAsPlayer1         Battle[]                @relation("Player1Battles")
+  battlesAsPlayer2         Battle[]                @relation("Player2Battles")
+  battlesWon               Battle[]                @relation("BattleWinner")
+  weeklyRoomParticipants   WeeklyRoomParticipant[]
+  weeklyEnrollments        WeeklyEnrollment[]
+  championRuns             ChampionRun[]
+  championWeeklySummaries  ChampionWeeklySummary[]
+  friendshipEdgesLow       FriendshipEdge[]        @relation("FriendshipLowUser")
+  friendshipEdgesHigh      FriendshipEdge[]        @relation("FriendshipHighUser")
+  friendshipEdgesInitiated FriendshipEdge[]        @relation("FriendshipInitiator")
+
+  @@index([username])
+  @@index([email])
+  @@index([trophies])
+  @@index([leagueId])
+  @@map("users")
+}
+
+// ============================================
+// NOVO MODELO: League (Tabela de Ligas)
+// ============================================
+
+model League {
+  id          String  @id @default(uuid())
+  code        String  @unique // Código estável e único (ex: "STARTER", "RITMO", "IMMORTAL")
+  displayName String // Nome para exibição (ex: "Starter", "Ritmo", "Imortal")
+  order       Int     @unique // Ordem de progressão (1 = Starter, 7 = Imortal)
+  isChampion  Boolean @default(false) // true apenas para Imortal
+
+  // Requisitos de entrada
+  minTrophiesToEnter Int? // Troféus mínimos para entrar (ex: 3000 para Imortal)
+
+  // Parâmetros de pontuação (balanceamento)
+  paceTopSecKm              Int // Pace "top" que dá pontuação máxima (em segundos/km)
+  paceBaseSecKm             Int // Pace "base" que dá pontuação zero (em segundos/km)
+  smurfCapSecKm             Int? // Cap anti-smurf para ligas baixas (nullable, apenas para Starter/Ritmo)
+  weeklyConsistencyMaxBonus Int // Bônus máximo de consistência semanal (ex: 400 para Starter, 250 para outras)
+
+  // Recompensas e cosméticos (futuro)
+  shieldName  String? // Nome do escudo (ex: "Escudo de Bronze")
+  shieldAsset String? // URL/Path do asset do escudo
+  rewardJson  Json? // JSON flexível para recompensas (ex: {"xp": 100, "badges": ["weekly_winner"]})
+  themeJson   Json? // JSON para tema visual (ex: {"primaryColor": "#FFD700", "gradient": [...]})
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  users                        User[]
+  weeklyRooms                  WeeklyRoom[]
+  weeklyRoomParticipants       WeeklyRoomParticipant[] @relation("StartingLeague") // Liga no início da semana (snapshot)
+  weeklyRoomParticipantsEnding WeeklyRoomParticipant[] @relation("EndingLeague") // Liga final após processamento
+  weeklyEnrollments            WeeklyEnrollment[] // Inscrições para semanas
+  championWeeklySummaries      ChampionWeeklySummary[] // Rebaixamentos
+
+  @@index([code])
+  @@index([order])
+  @@index([isChampion])
+  @@map("leagues")
+}
+
+// ============================================
+// MODELO: WeeklyEnrollment (Inscrições para semana)
+// ============================================
+
+model WeeklyEnrollment {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  weekKey      String // Semana para qual se inscreveu (ex: "2026-W03")
+  seasonNumber Int
+  weekNumber   Int
+
+  leagueId String // Liga do usuário no momento da inscrição (snapshot)
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Restrict)
+
+  enrolledAt DateTime @default(now())
+
+  @@unique([userId, weekKey]) // Um usuário só pode se inscrever uma vez por semana
+  @@index([weekKey])
+  @@index([userId])
+  @@index([leagueId])
+  @@index([enrolledAt])
+  @@map("weekly_enrollments")
+}
+
+// ============================================
+// MODELO ATUALIZADO: WeeklyRoom
+// ============================================
+
+model WeeklyRoom {
+  id String @id @default(uuid())
+
+  // RELACIONAMENTO COM LEAGUE (FK em vez de String)
+  leagueId String
+  league   League @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+
+  seasonNumber Int
+  weekNumber   Int
+  weekKey      String // Identificador único da semana (ex: "2026-W03") - facilita queries e jobs
+  roomNumber   Int              @default(1) // Número da sala na mesma liga/semana (1, 2, 3...) - permite múltiplas salas quando há >20 jogadores
+  startDate    DateTime // Início da semana (segunda 00:00)
+  endDate      DateTime // Fim da semana (domingo 23:59)
+  status       WeeklyRoomStatus @default(OPEN)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants WeeklyRoomParticipant[]
+  runs         WeeklyRun[]
+
+  // Permite múltiplas salas por liga/semana (roomNumber diferencia)
+  // Exemplo: Liga "Starter" Semana 5 pode ter Sala 1, Sala 2, Sala 3... se houver >20, >40, >60 jogadores
+  @@unique([leagueId, seasonNumber, weekNumber, roomNumber]) // Sala única identificada por liga/semana/número
+  @@index([leagueId, seasonNumber, weekNumber]) // Para buscar todas as salas de uma liga/semana
+  @@index([weekKey]) // Para queries rápidas por semana
+  @@index([leagueId, status])
+  @@index([startDate])
+  @@index([endDate])
+  @@index([status])
+  @@map("weekly_rooms")
+}
+
+enum WeeklyRoomStatus {
+  OPEN
+  IN_PROGRESS
+  FINISHED
+  CLOSED
+}
+
+// ============================================
+// MODELO ATUALIZADO: WeeklyRoomParticipant
+// ============================================
+
+model WeeklyRoomParticipant {
+  id     String     @id @default(uuid())
+  roomId String
+  room   WeeklyRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  userId String
+  user   User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // SNAPSHOT DA LIGA NO INÍCIO DA SEMANA (FK)
+  startingLeagueId String
+  startingLeague   League @relation("StartingLeague", fields: [startingLeagueId], references: [id], onDelete: Restrict)
+
+  // Pontuação semanal
+  totalPoints      Int @default(0) // Soma das melhores 5 corridas válidas
+  consistencyBonus Int @default(0) // Bônus de consistência semanal (0..maxBonus da liga)
+  runsValidCount   Int @default(0) // Número de corridas válidas (máx 10, conta melhores 5)
+
+  // Resultado final
+  position Int? // Posição final na sala (1-20)
+  promoted Boolean @default(false) // Se foi promovido (Top 4)
+  demoted  Boolean @default(false) // Se foi rebaixado (Bottom 4)
+
+  // Snapshot final após processamento semanal (auditoria)
+  endingLeagueId String? // Liga após processamento (FK)
+  endingLeague   League?   @relation("EndingLeague", fields: [endingLeagueId], references: [id], onDelete: SetNull)
+  processedAt    DateTime? // Data/hora do processamento semanal
+
+  // WeekKey copiado do WeeklyRoom para garantir 1 usuário = 1 sala por semana
+  weekKey String // Chave da semana (ex: "2026-W03") - copiado do WeeklyRoom.weekKey
+
+  joinedAt DateTime @default(now())
+
+  runs WeeklyRun[]
+
+  @@unique([roomId, userId]) // Um usuário só pode entrar uma vez por sala
+  @@unique([userId, weekKey]) // Um usuário só pode entrar em uma sala por semana (blinda regra no banco)
+  @@index([roomId])
+  @@index([userId])
+  @@index([weekKey]) // Para buscar participantes de uma semana
+  @@index([roomId, totalPoints(sort: Desc)]) // Para ranking
+  @@index([startingLeagueId])
+  @@index([endingLeagueId])
+  @@map("weekly_room_participants")
+}
+
+// ============================================
+// MODELO ATUALIZADO: WeeklyRun
+// ============================================
+
+model WeeklyRun {
+  id            String                @id @default(uuid())
+  participantId String
+  participant   WeeklyRoomParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  roomId        String
+  room          WeeklyRoom            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  runId         String // ID da corrida no sistema principal (Run)
+
+  // Métricas brutas (armazenadas para auditoria)
+  distanceMeters  Int // Distância em metros
+  durationSeconds Int // Duração em segundos
+  paceSecKm       Int // Pace em segundos por km (mais preciso que min/km)
+
+  // Scores calculados (0-1000 total)
+  paceScore       Int // Score de pace (0-650)
+  distanceScore   Int // Score de distância (0-200)
+  smoothnessScore Int // Score de regularidade/suavidade (0-150)
+  finalScore      Int // Score final após multiplicador: (paceScore + distanceScore + smoothnessScore) * multiplier
+
+  // Auditoria de contagem (máx 2 por dia, top 5 da semana)
+  dayKey      String // Chave do dia no formato "YYYY-MM-DD" (timezone do app) - facilita agregações
+  countedDay  Boolean @default(false) // true se entrou no top 2 do dia (máx 2 corridas/dia contam)
+  countedWeek Boolean @default(false) // true se entrou no top 5 da semana (melhores 5 corridas contam)
+
+  // Anti-cheat
+  isValid       Boolean @default(true)
+  invalidReason String?
+  flags         Json? // Array de flags de anti-cheat (ex: ["SPEED_ANOMALY", "GPS_JUMP"])
+  multiplier    Float   @default(1.0) // Multiplicador aplicado ao score (1.0 = válido, 0.9 = suspeito, 0.0 = inválido)
+
+  submittedAt DateTime @default(now())
+
+  // IMPORTANTE: Unique por roomId + runId previne mesma corrida em salas diferentes
+  // (participantId já está vinculado ao roomId, então não precisa do unique duplo)
+  @@unique([roomId, runId]) // Uma corrida não pode ser submetida duas vezes na mesma sala
+  @@index([participantId])
+  @@index([participantId, dayKey]) // Para buscar corridas do participante por dia
+  @@index([roomId])
+  @@index([runId])
+  @@index([submittedAt])
+  @@index([isValid])
+  @@map("weekly_runs")
+}
+
+// ============================================
+// NOVO MODELO: ChampionRun (Corridas da Liga Imortal)
+// ============================================
+
+model ChampionRun {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId  String // ID da corrida no sistema principal (Run)
+
+  // Métricas brutas
+  distanceMeters  Int
+  durationSeconds Int
+  paceSecKm       Int
+
+  // Score e troféus
+  finalScore     Int // Score calculado (similar ao WeeklyRun)
+  trophiesEarned Int @default(0) // Troféus ganhos nesta corrida (sempre >= 0, penalidades só no summary semanal)
+
+  // Anti-cheat (mesmo sistema)
+  isValid       Boolean @default(true)
+  invalidReason String?
+  flags         Json?
+  multiplier    Float   @default(1.0)
+
+  submittedAt DateTime @default(now())
+
+  @@unique([userId, runId]) // Uma corrida não pode ser submetida duas vezes pelo mesmo usuário
+  @@index([userId])
+  @@index([runId])
+  @@index([submittedAt])
+  @@index([isValid])
+  @@map("champion_runs")
+}
+
+// ============================================
+// NOVO MODELO: ChampionWeeklySummary (Auditoria Semanal Imortal)
+// ============================================
+
+model ChampionWeeklySummary {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  seasonNumber Int
+  weekNumber   Int
+  weekKey      String // Identificador único da semana (ex: "2026-W03") - facilita queries e jobs
+  weekStart    DateTime // Início da semana (segunda 00:00)
+  weekEnd      DateTime // Fim da semana (domingo 23:59)
+
+  // Estatísticas da semana
+  validRunsCount Int @default(0) // Número de corridas válidas
+
+  // Troféus
+  trophiesEarnedWeek  Int @default(0) // Troféus ganhos na semana
+  trophiesPenaltyWeek Int @default(0) // Penalidade por inatividade (< 3 corridas)
+  trophiesBefore      Int // Snapshot de troféus no início da semana
+  trophiesAfter       Int // Troféus após processamento semanal
+
+  // Rebaixamento
+  demoted           Boolean @default(false)
+  demotedToLeagueId String? // Liga para qual foi rebaixado (FK)
+  demotedToLeague   League? @relation(fields: [demotedToLeagueId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@unique([userId, seasonNumber, weekNumber]) // Um resumo por usuário/semana
+  @@index([userId])
+  @@index([weekKey]) // Para queries rápidas por semana
+  @@index([seasonNumber, weekNumber])
+  @@index([weekStart])
+  @@map("champion_weekly_summaries")
+}
+
+// ============================================
+// MODELOS EXISTENTES (mantidos)
+// ============================================
+
+model Territory {
+  id         String                                 @id @default(uuid())
+  userId     String
+  user       User                                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userName   String?
+  userColor  String?
+  areaName   String?
+  area       Float?
+  capturedAt DateTime?
+  createdAt  DateTime                               @default(now())
+  updatedAt  DateTime                               @updatedAt
+  geometry   Unsupported("geometry(Polygon, 4326)")
+
+  runs Run[]
+
+  @@index([geometry], name: "territory_geometry_idx", type: Gist)
+  @@index([userId])
+  @@index([capturedAt])
+  @@map("territories")
+}
+
+model Run {
+  id               String     @id @default(uuid())
+  userId           String
+  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startTime        DateTime   @default(now())
+  endTime          DateTime?
+  distance         Float      @default(0)
+  duration         Int        @default(0)
+  averagePace      Float      @default(0)
+  maxSpeed         Float?
+  elevationGain    Float?
+  calories         Int?
+  caption          String?
+  territoryId      String?
+  territory        Territory? @relation(fields: [territoryId], references: [id], onDelete: SetNull)
+  mapImageUrl      String?
+  mapImageCleanUrl String?
+  createdAt        DateTime   @default(now())
+
+  pathPoints RunPathPoint[]
+
+  @@index([userId])
+  @@index([startTime])
+  @@index([territoryId])
+  @@map("runs")
+}
+
+model RunPathPoint {
+  id            String   @id @default(uuid())
+  runId         String
+  run           Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  latitude      Float
+  longitude     Float
+  timestamp     DateTime
+  sequenceOrder Int
+
+  @@index([runId])
+  @@index([runId, sequenceOrder])
+  @@map("run_path_points")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([token])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ============================================
+// NOVO MODELO: Achievement (Catálogo de Conquistas)
+// ============================================
+
+model Achievement {
+  id String @id @default(uuid())
+
+  // Identificador estável e único (ex: "FIRST_RUN", "CAPTURE_10_TERRITORIES")
+  code String @unique
+
+  // Informações de exibição
+  title       String // Nome da conquista (ex: "Primeiros Passos")
+  description String // Descrição da conquista
+
+  // Categorização
+  category AchievementCategory // Categoria da conquista (RUN, TERRITORY, SOCIAL, LEAGUE, EVENT)
+  rarity   AchievementRarity // Raridade (COMMON, RARE, EPIC, LEGENDARY)
+
+  // Assets visuais
+  iconAsset String? // URL/path do ícone da conquista
+
+  // Configuração
+  isActive Boolean @default(true) // Se está ativa no sistema
+  isHidden Boolean @default(false) // Conquistas secretas (não aparecem até desbloqueadas)
+
+  // Critérios parametrizados (JSON flexível)
+  // Ex: { "runs": 10 }, { "distanceKm": 100 }, { "territories": 5, "minArea": 1000 }
+  criteriaJson Json? @db.JsonB
+
+  // Recompensas (JSON flexível)
+  // Ex: { "xp": 200, "trophies": 50, "badge": "gold", "title": "Corredor Experiente" }
+  rewardJson Json? @db.JsonB
+
+  // Temporadas/Eventos (nullable para conquistas permanentes)
+  seasonNumber Int? // Número da temporada (ex: 1, 2, 3...)
+
+  // Auditoria
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  userAchievements UserAchievement[]
+
+  @@index([code])
+  @@index([category])
+  @@index([rarity])
+  @@index([isActive])
+  @@index([isHidden])
+  @@index([seasonNumber])
+  @@index([createdAt])
+  @@map("achievements")
+}
+
+enum AchievementCategory {
+  RUN // Conquistas relacionadas a corridas
+  TERRITORY // Conquistas relacionadas a territórios
+  SOCIAL // Conquistas sociais (amigos, batalhas)
+  LEAGUE // Conquistas de ligas e temporadas
+  EVENT // Conquistas de eventos especiais
+  MILESTONE // Marcos gerais (level, XP, etc)
+}
+
+enum AchievementRarity {
+  COMMON // Conquistas comuns
+  RARE // Conquistas raras
+  EPIC // Conquistas épicas
+  LEGENDARY // Conquistas lendárias
+}
+
+enum AchievementStatus {
+  LOCKED // Ainda não iniciada (requisitos não atendidos)
+  IN_PROGRESS // Em progresso (alguns requisitos atendidos)
+  UNLOCKED // Desbloqueada, mas recompensa não reclamada
+  CLAIMED // Recompensa reclamada
+}
+
+// ============================================
+// MODELO ATUALIZADO: UserAchievement (Estado por Usuário)
+// ============================================
+
+model UserAchievement {
+  id String @id @default(uuid())
+
+  // Relacionamentos
+  userId        String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Restrict)
+
+  // Estado da conquista
+  status AchievementStatus @default(LOCKED)
+
+  // Progresso (0.0 a 1.0)
+  progress Float @default(0.0)
+
+  // Valores numéricos (opcional, para conquistas complexas)
+  currentValue Float? // Valor atual alcançado
+  targetValue  Float? // Valor alvo para desbloquear
+
+  // Texto de progresso (ex: "5/10 corridas", "3.2/5.0 km")
+  progressText String?
+
+  // Datas importantes
+  unlockedAt DateTime? // Quando foi desbloqueada
+  claimedAt  DateTime? // Quando a recompensa foi reclamada
+
+  // Auditoria
+  updatedAt DateTime @default(now()) @updatedAt
+
+  // Relacionamento com progresso detalhado
+  progressDetails UserAchievementProgress[]
+
+  @@unique([userId, achievementId]) // Um registro por usuário/conquista
+  @@index([userId])
+  @@index([achievementId])
+  @@index([userId, status])
+  @@index([status])
+  @@index([unlockedAt])
+  @@index([claimedAt])
+  @@map("user_achievements")
+}
+
+// ============================================
+// MODELO ATUALIZADO: UserAchievementProgress (Progresso Detalhado)
+// ============================================
+
+model UserAchievementProgress {
+  id String @id @default(uuid())
+
+  // Relacionamento com UserAchievement (não mais diretamente com achievementId)
+  userAchievementId String
+  userAchievement   UserAchievement @relation(fields: [userAchievementId], references: [id], onDelete: Cascade)
+
+  // Relacionamento com usuário (para facilitar queries)
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Progresso detalhado (para conquistas complexas com múltiplos critérios)
+  // Ex: Para conquista "Corra 100km em diferentes cidades"
+  //     pode ter: { "totalDistance": 75.5, "cities": 3, "lastCity": "Ribeirão Preto" }
+  progressData Json? @db.JsonB
+
+  // Valores incrementais (opcional)
+  currentValue Float? // Valor atual
+  targetValue  Float? // Valor alvo (pode mudar dinamicamente)
+
+  // Auditoria
+  lastUpdated DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  // Permite múltiplos registros por UserAchievement (para auditoria detalhada)
+  // Não há unique constraint, permitindo histórico
+  @@index([userAchievementId])
+  @@index([userId])
+  @@index([lastUpdated])
+  @@map("user_achievement_progress")
+}
+
+model Battle {
+  id         String       @id @default(uuid())
+  player1Id  String
+  player1    User         @relation("Player1Battles", fields: [player1Id], references: [id], onDelete: Cascade)
+  player2Id  String?
+  player2    User?        @relation("Player2Battles", fields: [player2Id], references: [id], onDelete: Cascade)
+  status     BattleStatus @default(SEARCHING)
+  winnerId   String?
+  winner     User?        @relation("BattleWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+  mode       String
+  p1Score    Float?
+  p2Score    Float?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  finishedAt DateTime?
+
+  @@index([player1Id])
+  @@index([player2Id])
+  @@index([status])
+  @@index([winnerId])
+  @@map("battles")
+}
+
+enum BattleStatus {
+  SEARCHING
+  IN_PROGRESS
+  FINISHED
+  CANCELLED
+}
+
+// ============================================
+// BLOCO: Sistema de Amigos (1 registro por par)
+// ============================================
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  BLOCKED
+}
+
+model FriendshipEdge {
+  id String @id @default(uuid())
+
+  // Par ordenado (sempre: userLowId < userHighId) - NORMALIZAÇÃO OBRIGATÓRIA NO BACKEND
+  // ⚠️ IMPORTANTE: O backend DEVE garantir que userLowId = min(userA, userB) e userHighId = max(userA, userB)
+  // Isso previne duplicação (A,B) e (B,A) que seriam registros diferentes apesar do unique constraint
+  userLowId  String
+  userHighId String
+  userLow    User   @relation("FriendshipLowUser", fields: [userLowId], references: [id], onDelete: Cascade)
+  userHigh   User   @relation("FriendshipHighUser", fields: [userHighId], references: [id], onDelete: Cascade)
+
+  // Quem iniciou a ação atual (pedido/bloqueio)
+  initiatedByUserId String
+  initiatedByUser   User   @relation("FriendshipInitiator", fields: [initiatedByUserId], references: [id], onDelete: Cascade)
+
+  status FriendshipStatus @default(PENDING)
+
+  // Opcional: mensagem no convite
+  message String?
+
+  // Auditoria
+  createdAt   DateTime  @default(now())
+  respondedAt DateTime? // quando aceitou (ou quando mudou pra BLOCKED)
+  updatedAt   DateTime  @updatedAt
+
+  // 1 registro por par (blindagem total)
+  @@unique([userLowId, userHighId])
+  // Index para listar amigos e pendências rápido
+  @@index([userLowId, status])
+  @@index([userHighId, status])
+  @@index([initiatedByUserId])
+  @@index([status])
+  @@map("friendship_edges")
+}
+
+// ============================================
+// ATUALIZAÇÃO NO User (adicione estes relations)
+// ============================================
+// Cole dentro do model User:
+//
+// friendshipsLow      FriendshipEdge[] @relation("FriendshipLowUser")
+// friendshipsHigh     FriendshipEdge[] @relation("FriendshipHighUser")
+// friendshipsInitiated FriendshipEdge[] @relation("FriendshipInitiator")

@@ -1,0 +1,236 @@
+/**
+ * generator client {
+ * provider        = "prisma-client-js"
+ * previewFeatures = ["postgresqlExtensions"]
+ * }
+ * datasource db {
+ * provider   = "postgresql"
+ * extensions = [postgis]
+ * }
+ * model User {
+ * id        String   @id @default(uuid())
+ * username  String   @unique
+ * name      String
+ * email     String   @unique
+ * password  String
+ * createdAt DateTime @default(now())
+ * updatedAt DateTime @updatedAt
+ * color        String    @default("#FF0000")
+ * biography    String?
+ * photoUrl     String?
+ * lastLogin    DateTime?
+ * level        Int       @default(1)
+ * xp           Int       @default(0) // Experiência (XP) do usuário
+ * trophies     Int       @default(0) // Troféus para sistema de batalhas PvP
+ * league       String? // Liga atual (ex: 'Bronze I', 'Prata II', 'Ouro III', 'Cristal I', 'Mestre')
+ * winStreak    Int       @default(0) // Contador de vitórias seguidas
+ * battleWins   Int       @default(0) // Total de vitórias no PvP
+ * battleLosses Int       @default(0) // Total de derrotas no PvP
+ * territories   Territory[]
+ * refreshTokens RefreshToken[]
+ * runs          Run[]
+ * userAchievements        UserAchievement[]
+ * userAchievementProgress UserAchievementProgress[]
+ * battlesAsPlayer1        Battle[]                  @relation("Player1Battles")
+ * battlesAsPlayer2        Battle[]                  @relation("Player2Battles")
+ * battlesWon              Battle[]                  @relation("BattleWinner")
+ * weeklyRoomParticipants  WeeklyRoomParticipant[] // Participações em salas semanais
+ * @@index([username])
+ * @@index([email])
+ * @@index([trophies])
+ * @@map("users")
+ * }
+ * model Territory {
+ * id         String                                 @id @default(uuid())
+ * userId     String
+ * user       User                                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * userName   String?
+ * userColor  String?
+ * areaName   String?
+ * area       Float? // em metros quadrados
+ * capturedAt DateTime?                              @default(now())
+ * createdAt  DateTime                               @default(now())
+ * geometry   Unsupported("geometry(Polygon, 4326)")
+ * runs Run[]
+ * @@index([geometry], name: "territory_geometry_idx", type: Gist)
+ * @@index([userId])
+ * @@index([capturedAt])
+ * @@map("territories")
+ * }
+ * model Run {
+ * id               String     @id @default(uuid())
+ * userId           String
+ * user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * startTime        DateTime   @default(now())
+ * endTime          DateTime?
+ * distance         Float      @default(0) // em metros
+ * duration         Int        @default(0) // em segundos
+ * averagePace      Float      @default(0) // em min/km
+ * maxSpeed         Float? // em km/h
+ * elevationGain    Float? // em metros
+ * calories         Int?
+ * caption          String?
+ * territoryId      String?
+ * territory        Territory? @relation(fields: [territoryId], references: [id], onDelete: SetNull)
+ * mapImageUrl      String? // URL da imagem do trajeto no mapa
+ * mapImageCleanUrl String? // URL da imagem do trajeto no mapa limpo
+ * createdAt        DateTime   @default(now())
+ * pathPoints RunPathPoint[]
+ * @@index([userId])
+ * @@index([startTime])
+ * @@index([territoryId])
+ * @@map("runs")
+ * }
+ * model RunPathPoint {
+ * id            String   @id @default(uuid())
+ * runId         String
+ * run           Run      @relation(fields: [runId], references: [id], onDelete: Cascade)
+ * latitude      Float
+ * longitude     Float
+ * timestamp     DateTime
+ * sequenceOrder Int
+ * @@index([runId])
+ * @@index([runId, sequenceOrder])
+ * @@map("run_path_points")
+ * }
+ * model RefreshToken {
+ * id        String   @id @default(uuid())
+ * token     String   @unique
+ * userId    String
+ * user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * expiresAt DateTime
+ * createdAt DateTime @default(now())
+ * @@index([token])
+ * @@index([userId])
+ * @@map("refresh_tokens")
+ * }
+ * model UserAchievement {
+ * id            String    @id @default(uuid())
+ * userId        String
+ * user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * achievementId String // ID da conquista (ex: "EX-01", "AT-02") - vem do cq.json do frontend
+ * status        String    @default("locked") // 'completed', 'inProgress', 'locked'
+ * progress      Float     @default(0.0) // 0.0 a 1.0
+ * progressText  String?
+ * unlockedAt    DateTime?
+ * xpReward      Int? // XP ganho ao completar (do cq.json)
+ * medalType     String? // bronze, silver, gold, legendary
+ * category      String? // explorer, athlete, strategist, legendary
+ * updatedAt     DateTime  @default(now()) @updatedAt
+ * @@unique([userId, achievementId])
+ * @@index([userId])
+ * @@index([userId, status])
+ * @@map("user_achievements")
+ * }
+ * model UserAchievementProgress {
+ * id            String   @id @default(uuid())
+ * userId        String
+ * user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * achievementId String // ID da conquista (ex: "EX-01", "AT-02")
+ * progress      Float    @default(0.0) // 0.0 a 1.0 (DECIMAL(5,4))
+ * lastUpdated   DateTime @default(now())
+ * createdAt     DateTime @default(now())
+ * updatedAt     DateTime @default(now()) @updatedAt
+ * @@unique([userId, achievementId])
+ * @@index([userId])
+ * @@index([achievementId])
+ * @@index([lastUpdated])
+ * @@map("user_achievement_progress")
+ * }
+ * model Battle {
+ * id         String       @id @default(uuid())
+ * player1Id  String
+ * player1    User         @relation("Player1Battles", fields: [player1Id], references: [id], onDelete: Cascade)
+ * player2Id  String?
+ * player2    User?        @relation("Player2Battles", fields: [player2Id], references: [id], onDelete: Cascade)
+ * status     BattleStatus @default(SEARCHING)
+ * winnerId   String?
+ * winner     User?        @relation("BattleWinner", fields: [winnerId], references: [id], onDelete: SetNull)
+ * mode       String // 'timed' (ex: 15 min) ou 'distance' (ex: 5km)
+ * p1Score    Float?
+ * p2Score    Float?
+ * createdAt  DateTime     @default(now())
+ * updatedAt  DateTime     @updatedAt
+ * finishedAt DateTime?
+ * @@index([player1Id])
+ * @@index([player2Id])
+ * @@index([status])
+ * @@index([winnerId])
+ * @@map("battles")
+ * }
+ * enum BattleStatus {
+ * SEARCHING
+ * IN_PROGRESS
+ * FINISHED
+ * CANCELLED
+ * }
+ * // ============================================
+ * // SISTEMA DE BATALHAS SEMANAIS (NOVO)
+ * // Separado do sistema 1v1 acima
+ * // ============================================
+ * model WeeklyRoom {
+ * id           String           @id @default(uuid())
+ * league       String // Liga da sala (Bronze, Prata, Ouro, Aspirante, Atleta, Pro, Campeão)
+ * seasonNumber Int // Número da temporada
+ * weekNumber   Int // Semana da temporada
+ * startDate    DateTime // Início da semana (segunda 00:00)
+ * endDate      DateTime // Fim da semana (domingo 23:59)
+ * status       WeeklyRoomStatus @default(OPEN)
+ * createdAt    DateTime         @default(now())
+ * updatedAt    DateTime         @updatedAt
+ * participants WeeklyRoomParticipant[]
+ * runs         WeeklyRun[]
+ * @@index([league, status])
+ * @@index([startDate])
+ * @@index([endDate])
+ * @@index([status])
+ * @@map("weekly_rooms")
+ * }
+ * enum WeeklyRoomStatus {
+ * OPEN
+ * IN_PROGRESS
+ * FINISHED
+ * CLOSED
+ * }
+ * model WeeklyRoomParticipant {
+ * id            String     @id @default(uuid())
+ * roomId        String
+ * room          WeeklyRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+ * userId        String
+ * user          User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+ * currentLeague String // Liga no início da semana
+ * totalPoints   Float      @default(0) // Pontos acumulados
+ * runsCompleted Int        @default(0) // Corridas válidas completadas
+ * position      Int? // Posição final na sala
+ * promoted      Boolean    @default(false) // Se foi promovido
+ * demoted       Boolean    @default(false) // Se foi rebaixado
+ * joinedAt      DateTime   @default(now())
+ * runs WeeklyRun[]
+ * @@unique([roomId, userId])
+ * @@index([roomId])
+ * @@index([userId])
+ * @@index([roomId, totalPoints(sort: Desc)])
+ * @@map("weekly_room_participants")
+ * }
+ * model WeeklyRun {
+ * id               String                @id @default(uuid())
+ * participantId    String
+ * participant      WeeklyRoomParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+ * roomId           String
+ * room             WeeklyRoom            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+ * runId            String // ID da corrida no sistema principal (Run)
+ * distance         Float // em metros
+ * duration         Int // em segundos
+ * averagePace      Float // em min/km
+ * paceRegularity   Float? // Score de regularidade (0-1)
+ * points           Float // Pontos desta corrida
+ * isValid          Boolean               @default(true) // Se passou no anti-cheat
+ * validationReason String? // Motivo de invalidação se houver
+ * submittedAt      DateTime              @default(now())
+ * @@index([participantId])
+ * @@index([roomId])
+ * @@index([runId])
+ * @@index([submittedAt])
+ * @@map("weekly_runs")
+ * }
+ */
