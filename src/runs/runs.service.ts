@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { RunsRepository } from './runs.repository';
 import { MapMatchingService } from './map-matching.service';
 import { CreateTerritoryDto } from './dto/create-territory.dto';
@@ -8,10 +8,13 @@ import { UploadService } from '../users/upload.service';
 import { AchievementsService } from '../users/achievements.service';
 import { RunsCalculationService } from './services/runs-calculation.service';
 import { TerritoryService } from './services/territory.service';
+import { boundaryPointsToPolygonWKT } from '../common/gis/gis.helpers';
 import * as turf from '@turf/turf';
 
 @Injectable()
 export class RunsService {
+    private readonly logger = new Logger(RunsService.name);
+
     constructor(
         private readonly runsRepository: RunsRepository,
         private readonly mapMatchingService: MapMatchingService,
@@ -35,8 +38,8 @@ export class RunsService {
                 throw new BadRequestException('Path deve ter pelo menos 2 pontos');
             }
 
-            console.log('🏃 Recebendo corrida simples do frontend:');
-            console.log(`   - Pontos: ${dto.path.length}`);
+            this.logger.log('🏃 Recebendo corrida simples do frontend');
+            this.logger.log(`   - Pontos: ${dto.path.length}`);
 
             // Processar timestamps
             const startTime = dto.startTime ? new Date(dto.startTime) : new Date();
@@ -76,10 +79,12 @@ export class RunsService {
                 averagePace: dto.averagePace,
                 startTime,
                 pathPoints: dto.path,
-            }).catch(err => console.error('Erro ao verificar conquistas:', err));
+            }).catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Verificar conquistas de marcos (nível pode ter mudado após XP ganho)
-            this.achievementsService.checkMilestoneAchievements(userId).catch(err => console.error('Erro ao verificar conquistas:', err));
+            this.achievementsService
+                .checkMilestoneAchievements(userId)
+                .catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Salvar imagem do mapa após criar a corrida
             /*  if (mapImage) {
@@ -100,7 +105,7 @@ export class RunsService {
             };
 
         } catch (error: any) {
-            console.error('❌ Erro ao criar corrida simples:', error.message);
+            this.logger.error('❌ Erro ao criar corrida simples', error?.stack || error);
 
             if (error instanceof BadRequestException) {
                 throw error;
@@ -115,10 +120,10 @@ export class RunsService {
             // Validar boundary (LineString - não fechada, mínimo 2 pontos)
             this.validateBoundary(dto.boundary);
 
-            console.log('📥 Recebendo território do frontend:');
-            console.log(`   - Tipo: LineString (${dto.boundary.length} pontos)`);
-            console.log(`   - Usuário: ${dto.userName}`);
-            console.log(`   - Área: ${dto.areaName}`);
+            this.logger.log('📥 Recebendo território do frontend');
+            this.logger.log(`   - Tipo: LineString (${dto.boundary.length} pontos)`);
+            this.logger.log(`   - Usuário: ${dto.userName}`);
+            this.logger.log(`   - Área: ${dto.areaName}`);
             //  console.log(`   - Imagem do mapa: ${mapImage ? 'Sim' : 'Não'}`);
 
             // Aplicar Map Matching para corrigir erros de GPS e alinhar com as ruas
@@ -126,7 +131,7 @@ export class RunsService {
 
             if (this.mapMatchingService.isAvailable() && dto.boundary.length >= 2) {
                 try {
-                    console.log('🗺️ Aplicando Map Matching para corrigir trajeto...');
+                    this.logger.log('🗺️ Aplicando Map Matching para corrigir trajeto...');
                     // Timeout de 30 segundos para Map Matching
                     const mapMatchingPromise = this.mapMatchingService.matchTrace(dto.boundary, 'walking');
                     const timeoutPromise = new Promise((_, reject) =>
@@ -134,15 +139,15 @@ export class RunsService {
                     );
 
                     correctedBoundary = await Promise.race([mapMatchingPromise, timeoutPromise]) as typeof dto.boundary;
-                    console.log(`✅ Trajeto corrigido: ${dto.boundary.length} → ${correctedBoundary.length} pontos`);
+                    this.logger.log(`✅ Trajeto corrigido: ${dto.boundary.length} → ${correctedBoundary.length} pontos`);
                 } catch (error: any) {
-                    console.warn('⚠️ Erro ao aplicar Map Matching, usando pontos originais:', error.message);
+                    this.logger.warn(`⚠️ Erro ao aplicar Map Matching, usando pontos originais: ${error?.message || error}`);
                     // Continuar com pontos originais em caso de erro ou timeout
                     correctedBoundary = dto.boundary;
                 }
             } else {
                 if (!this.mapMatchingService.isAvailable()) {
-                    console.log('ℹ️ Map Matching não disponível (token não configurado)');
+                    this.logger.log('ℹ️ Map Matching não disponível (token não configurado)');
                 }
             }
 
@@ -180,19 +185,21 @@ export class RunsService {
             let xpResult: Awaited<ReturnType<typeof this.xpService.addXp>> | null = null;
             try {
                 xpResult = await this.xpService.addXp(userId, 50);
-                console.log(`✨ ${userId} ganhou 50 XP! Nível: ${xpResult.previousLevel} → ${xpResult.newLevel}`);
+                this.logger.log(`✨ ${userId} ganhou 50 XP! Nível: ${xpResult.previousLevel} → ${xpResult.newLevel}`);
             } catch (xpError: any) {
-                console.warn('⚠️ Erro ao adicionar XP:', xpError.message);
+                this.logger.warn(`⚠️ Erro ao adicionar XP: ${xpError?.message || xpError}`);
             }
 
             // Verificar conquistas relacionadas a territórios (assíncrono, não bloqueia)
             this.achievementsService.checkTerritoryAchievements(userId, {
                 area: territoryResult.area,
                 stolen: false, // TODO: Detectar se roubou território de outro jogador
-            }).catch(err => console.error('Erro ao verificar conquistas de território:', err));
+            }).catch(err => this.logger.error('Erro ao verificar conquistas de território', err?.stack || err));
 
             // Verificar conquistas de marcos (nível pode ter mudado após XP ganho)
-            this.achievementsService.checkMilestoneAchievements(userId).catch(err => console.error('Erro ao verificar conquistas:', err));
+            this.achievementsService
+                .checkMilestoneAchievements(userId)
+                .catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Montar resposta com XP e imagem do mapa
             return {
@@ -207,7 +214,7 @@ export class RunsService {
             };
 
         } catch (error: any) {
-            console.error('❌ Erro ao criar território:', error.message);
+            this.logger.error('❌ Erro ao criar território', error?.stack || error);
 
             // Sempre retornar um erro HTTP adequado para o frontend
             if (error instanceof BadRequestException) {
@@ -234,7 +241,7 @@ export class RunsService {
         );
 
         if (!isOrdered) {
-            console.warn('⚠️ Pontos não estão em ordem cronológica, reordenando...');
+            this.logger.warn('⚠️ Pontos não estão em ordem cronológica, reordenando...');
             boundary.sort((a, b) =>
                 new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
             );
@@ -252,7 +259,7 @@ export class RunsService {
         // Permitir primeiro e último ponto iguais - o backend vai tratar como circuito fechado
         // Não rejeitar aqui, apenas logar informação
         if (latEqual && lngEqual) {
-            console.log('ℹ️ Boundary recebido com primeiro e último ponto iguais (circuito fechado)');
+            this.logger.log('ℹ️ Boundary recebido com primeiro e último ponto iguais (circuito fechado)');
         }
 
         // Validar coordenadas
@@ -295,9 +302,8 @@ export class RunsService {
             return { message: 'Corrida salva, mas não fechou área.', conquered: false };
         }
 
-        // Fecha o polígono para o PostGIS
-        const closedPath = [...path, path[0]];
-        const wkt = `POLYGON((${closedPath.map(p => `${p.longitude} ${p.latitude}`).join(',')}))`;
+        // Fecha o polígono para o PostGIS usando helper GIS
+        const wkt = boundaryPointsToPolygonWKT(path);
 
         // Calcular estatísticas da corrida
         const startTime = new Date();

@@ -178,6 +178,29 @@ export function geoJsonLineStringToWKT(geoJson: unknown): string {
   }
   
 /**
+ * Converte BoundaryPoint[] -> WKT Polygon (EPSG:4326)
+ * Ex: POLYGON((lng lat, lng lat, ...))
+ */
+export function boundaryPointsToPolygonWKT(points: BoundaryPoint[]): string {
+  if (!Array.isArray(points) || points.length < 3) {
+    throw new Error('Boundary inválido: esperado ao menos 3 pontos para polígono');
+  }
+
+  const ring: Array<[number, number]> = points.map((p) => {
+    assertFiniteNumber(p.longitude, 'Boundary inválido: longitude deve ser número finito');
+    assertFiniteNumber(p.latitude, 'Boundary inválido: latitude deve ser número finito');
+    if (!isValidLongitude(p.longitude) || !isValidLatitude(p.latitude)) {
+      throw new Error('Boundary inválido: coordenadas fora do range permitido');
+    }
+    return [p.longitude, p.latitude];
+  });
+
+  const closedRing = closePolygonRing(ring);
+  const parts = closedRing.map(([longitude, latitude]) => `${longitude} ${latitude}`);
+  return `POLYGON((${parts.join(', ')}))`;
+}
+
+/**
  * Converte WKT LineString -> GeoJSON LineString
  */
 export function wktLineStringToGeoJson(wkt: string): GeoJsonLineString {
