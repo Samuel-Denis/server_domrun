@@ -367,6 +367,7 @@ model Territory {
   @@index([geometry], name: "territory_geometry_idx", type: Gist)
   @@index([userId])
   @@index([capturedAt])
+  @@index([userId, capturedAt])
   @@map("territories")
 }
 
@@ -394,6 +395,7 @@ model Run {
   @@index([userId])
   @@index([startTime])
   @@index([territoryId])
+  @@index([userId, createdAt])
   @@map("runs")
 }
 
@@ -603,6 +605,7 @@ model Battle {
   @@index([player2Id])
   @@index([status])
   @@index([winnerId])
+  @@index([status, createdAt])
   @@map("battles")
 }
 
