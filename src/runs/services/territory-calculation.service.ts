@@ -75,17 +75,13 @@ export class TerritoryCalculationService {
    * o formato boundary que o frontend espera.
    * 
    * @param geoJson - GeoJSON Polygon retornado do PostGIS (ST_AsGeoJSON)
-   * @returns Array de pontos no formato {latitude, longitude, timestamp}
+   * @returns Array de pontos no formato {latitude, longitude} (sem timestamps fake)
    */
   geoJsonToBoundaryPoints(
     geoJson: any,
   ): Array<{ latitude: number; longitude: number; timestamp?: string }> {
     try {
-      const boundary = geoJsonPolygonToBoundaryPoints(geoJson);
-      return boundary.map((point) => ({
-        ...point,
-        timestamp: new Date().toISOString(), // Timestamp aproximado (não preservado do original)
-      }));
+      return geoJsonPolygonToBoundaryPoints(geoJson);
     } catch {
       return [];
     }
