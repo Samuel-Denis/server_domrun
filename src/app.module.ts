@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { BattlesModule } from './battles/battles.module';
 import { WeeklyBattlesModule } from './weekly-battles/weekly-battles.module';
 import { validateEnv } from './config/env.validation';
+import { HealthController } from './health/health.controller';
 
 @Module({
   imports: [
@@ -26,7 +27,7 @@ import { validateEnv } from './config/env.validation';
     BattlesModule,
     WeeklyBattlesModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [AppService],
 })
 export class AppModule { }
