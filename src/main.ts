@@ -1,9 +1,11 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { join } from 'path';
 import { AppModule } from './app.module';
+import { requestIdMiddleware } from './common/middleware/request-id.middleware';
+import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 /**
  * Parse e valida a variável de ambiente CORS_ORIGINS
@@ -13,6 +15,7 @@ import { AppModule } from './app.module';
  * @returns Array de origins válidos (sem espaços, URLs válidas)
  */
 function parseCorsOrigins(corsOriginsString: string | undefined): string[] {
+  const logger = new Logger('CORS');
   if (!corsOriginsString || corsOriginsString.trim() === '') {
     return [];
   }
@@ -32,10 +35,10 @@ function parseCorsOrigins(corsOriginsString: string | undefined): string[] {
       if (url.protocol === 'http:' || url.protocol === 'https:') {
         validOrigins.push(origin);
       } else {
-        console.warn(`⚠️  CORS origin ignorado (protocolo inválido): ${origin}`);
+        logger.warn(`⚠️  CORS origin ignorado (protocolo inválido): ${origin}`);
       }
     } catch (error) {
-      console.warn(`⚠️  CORS origin ignorado (URL inválida): ${origin}`);
+      logger.warn(`⚠️  CORS origin ignorado (URL inválida): ${origin}`);
     }
   }
 
@@ -48,6 +51,7 @@ function parseCorsOrigins(corsOriginsString: string | undefined): string[] {
  * - PROD: usa allowlist de CORS_ORIGINS (seguro para produção)
  */
 function getCorsConfig(configService: ConfigService) {
+  const logger = new Logger('CORS');
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
   const corsOriginsEnv = configService.get<string>('CORS_ORIGINS');
   const isProduction = nodeEnv === 'production';
@@ -60,8 +64,8 @@ function getCorsConfig(configService: ConfigService) {
       throw new Error('CORS_ORIGINS é obrigatório em produção');
     }
 
-    console.log(`🔒 CORS configurado para produção com ${allowedOrigins.length} origin(s) permitida(s):`);
-    allowedOrigins.forEach(origin => console.log(`   - ${origin}`));
+    logger.log(`🔒 CORS configurado para produção com ${allowedOrigins.length} origin(s) permitida(s):`);
+    allowedOrigins.forEach(origin => logger.log(`   - ${origin}`));
 
     return {
       origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
@@ -76,7 +80,7 @@ function getCorsConfig(configService: ConfigService) {
         }
 
         // Origin não permitida
-        console.warn(`🚫 CORS bloqueado: origin não permitida: ${origin}`);
+        logger.warn(`🚫 CORS bloqueado: origin não permitida: ${origin}`);
         return callback(new Error('Not allowed by CORS'));
       },
       credentials: true,
@@ -85,7 +89,7 @@ function getCorsConfig(configService: ConfigService) {
     };
   } else {
     // DESENVOLVIMENTO: permite qualquer origin (flexível)
-    console.log('🔓 CORS configurado para desenvolvimento (permitindo todas as origins)');
+    logger.log('🔓 CORS configurado para desenvolvimento (permitindo todas as origins)');
     return {
       origin: true, // Permite todas as origens
       credentials: true,
@@ -96,6 +100,7 @@ function getCorsConfig(configService: ConfigService) {
 }
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
   // Obter ConfigService para acessar variáveis de ambiente
@@ -107,6 +112,9 @@ async function bootstrap() {
   app.useStaticAssets(uploadsPath, {
     prefix: '/uploads/',
   });
+
+  app.use(requestIdMiddleware);
+  app.useGlobalFilters(new HttpExceptionFilter());
 
   // Configurar CORS baseado no ambiente
   const corsConfig = getCorsConfig(configService);
@@ -121,7 +129,7 @@ async function bootstrap() {
   const port = process.env.PORT ?? 3000;
   // Escutar em 0.0.0.0 para permitir conexões de qualquer interface de rede
   await app.listen(port, '0.0.0.0');
-  console.log(`🚀 Servidor rodando em http://0.0.0.0:${port}`);
-  console.log(`📱 Para conectar do celular, use o IP da sua máquina na mesma rede`);
+  logger.log(`🚀 Servidor rodando em http://0.0.0.0:${port}`);
+  logger.log('📱 Para conectar do celular, use o IP da sua máquina na mesma rede');
 }
 bootstrap();
