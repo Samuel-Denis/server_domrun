@@ -36,9 +36,18 @@ export const envValidationSchema = Joi.object({
   // Map Matching (opcional)
   MAPBOX_ACCESS_TOKEN: Joi.string().optional().allow(''),
   
-  // CORS Origins (opcional, obrigatório em produção se especificado)
+  // CORS Origins
   // Formato: "https://app.com,https://admin.app.com" (separado por vírgula)
-  CORS_ORIGINS: Joi.string().optional().allow(''),
+  CORS_ORIGINS: Joi.string().when('NODE_ENV', {
+    is: 'production',
+    then: Joi.string()
+      .required()
+      .messages({
+        'any.required': 'CORS_ORIGINS é obrigatório em produção',
+        'string.empty': 'CORS_ORIGINS não pode estar vazio em produção',
+      }),
+    otherwise: Joi.string().optional().allow(''),
+  }),
 });
 
 /**

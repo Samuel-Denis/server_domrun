@@ -57,15 +57,7 @@ function getCorsConfig(configService: ConfigService) {
     const allowedOrigins = parseCorsOrigins(corsOriginsEnv);
 
     if (allowedOrigins.length === 0) {
-      // Se não especificado em produção, permite todas (com aviso)
-      // Isso mantém compatibilidade com frontend existente
-      console.warn('⚠️  CORS_ORIGINS não definido em produção. Permitindo todas as origins (não recomendado para segurança).');
-      return {
-        origin: true,
-        credentials: true,
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowedHeaders: ['Content-Type', 'Authorization'],
-      };
+      throw new Error('CORS_ORIGINS é obrigatório em produção');
     }
 
     console.log(`🔒 CORS configurado para produção com ${allowedOrigins.length} origin(s) permitida(s):`);
