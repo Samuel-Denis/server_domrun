@@ -226,6 +226,65 @@ export class UsersController {
   }
 
   /**
+   * Busca runs públicas de um usuário com paginação cursor-based
+   * 
+   * Use ?take=20&cursor=<id> para paginação.
+   */
+  @Get(':id/runs')
+  async getPublicUserRuns(
+    @Param('id') id: string,
+    @Query('take') take?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const takeNum = take ? parseInt(take, 10) : 20;
+    if (takeNum < 1 || takeNum > 100) {
+      throw new BadRequestException('take deve estar entre 1 e 100');
+    }
+    return this.usersService.getUserRunsCursorBased(id, takeNum, cursor);
+  }
+
+  /**
+   * Busca territórios públicos de um usuário com paginação cursor-based
+   * 
+   * Use ?take=20&cursor=<id>&simplify=10 para reduzir pontos da geometria.
+   */
+  @Get(':id/territories')
+  async getPublicUserTerritories(
+    @Param('id') id: string,
+    @Query('take') take?: string,
+    @Query('cursor') cursor?: string,
+    @Query('simplify') simplify?: string,
+  ) {
+    const takeNum = take ? parseInt(take, 10) : 20;
+    if (takeNum < 1 || takeNum > 100) {
+      throw new BadRequestException('take deve estar entre 1 e 100');
+    }
+    const simplifyTolerance = simplify ? parseFloat(simplify) : undefined;
+    if (simplifyTolerance !== undefined && (isNaN(simplifyTolerance) || simplifyTolerance < 0)) {
+      throw new BadRequestException('simplify deve ser um número positivo (tolerância em metros)');
+    }
+    return this.usersService.getUserTerritoriesCursorBased(id, takeNum, cursor, simplifyTolerance);
+  }
+
+  /**
+   * Busca conquistas públicas de um usuário com paginação cursor-based
+   * 
+   * Use ?take=20&cursor=<id> para paginação.
+   */
+  @Get(':id/achievements')
+  async getPublicUserAchievements(
+    @Param('id') id: string,
+    @Query('take') take?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const takeNum = take ? parseInt(take, 10) : 20;
+    if (takeNum < 1 || takeNum > 100) {
+      throw new BadRequestException('take deve estar entre 1 e 100');
+    }
+    return this.achievementsService.getUserAchievementsCursorBased(id, takeNum, cursor);
+  }
+
+  /**
    * Busca perfil público de um usuário
    * 
    * Por padrão retorna apenas dados básicos (otimizado):
