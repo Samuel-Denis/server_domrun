@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, UseGuards, HttpCode, HttpStatus, BadRequestException, Query } from '@nestjs/common';
+import { Controller, Post, Body, Get, UseGuards, HttpCode, HttpStatus, BadRequestException, Query, Logger } from '@nestjs/common';
 import { RunsService } from './runs.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -8,11 +8,13 @@ import { plainToInstance } from 'class-transformer';
 import {
     geoJsonLineStringToBoundaryPoints,
     simplifyBoundaryPointsByDistance,
-  } from '../common/gis/gis.helpers';
+} from '../common/gis/gis.helpers';
 import * as turf from '@turf/turf';
 
 @Controller('runs')
 export class RunsController {
+    private readonly logger = new Logger(RunsController.name);
+
     constructor(private readonly runsService: RunsService) { }
 
     /**
@@ -46,10 +48,10 @@ export class RunsController {
     @UseGuards(JwtAuthGuard)
     @Post()
     @HttpCode(HttpStatus.CREATED)
-    
+
     async createRun(
         @CurrentUser() user: any,
-        
+
         @Body() body: any,
     ) {
         // Se veio como multipart/form-data, o JSON está no campo 'data'
@@ -65,10 +67,10 @@ export class RunsController {
         }
 
         // Debug: Log do que está chegando
-        console.log('📥 [RunsController] Dados recebidos:');
-        console.log('   - body keys:', Object.keys(dataToParse));
-        console.log('   - boundary existe?', !!dataToParse.boundary);
-        console.log('   - boundary type:', typeof dataToParse.boundary);
+        this.logger.log('📥 Dados recebidos');
+        this.logger.log(`   - body keys: ${Object.keys(dataToParse).join(', ')}`);
+        this.logger.log(`   - boundary existe? ${!!dataToParse.boundary}`);
+        this.logger.log(`   - boundary type: ${typeof dataToParse.boundary}`);
 
         // Remover userId se estiver presente (usa do token)
         if (dataToParse.userId) {
@@ -76,48 +78,48 @@ export class RunsController {
         }
 
         // Converter formato GeoJSON para formato esperado se necessário
-    /*    if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
-            // É formato GeoJSON: { type: "LineString", coordinates: [[lng, lat], ...] }
-            if (dataToParse.boundary.type === 'LineString' && Array.isArray(dataToParse.boundary.coordinates)) {
-                console.log('🔄 Convertendo GeoJSON para formato esperado...');
-                const now = new Date();
-                dataToParse.boundary = dataToParse.boundary.coordinates.map((coord: number[], index: number) => {
-                    const [longitude, latitude] = coord;
-                    // Criar timestamp progressivo se não tiver capturedAt
-                    const timestamp = dataToParse.capturedAt
-                        ? new Date(new Date(dataToParse.capturedAt).getTime() + (index * 1000)).toISOString()
-                        : new Date(now.getTime() + (index * 1000)).toISOString();
+        /*    if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
+                // É formato GeoJSON: { type: "LineString", coordinates: [[lng, lat], ...] }
+                if (dataToParse.boundary.type === 'LineString' && Array.isArray(dataToParse.boundary.coordinates)) {
+                    console.log('🔄 Convertendo GeoJSON para formato esperado...');
+                    const now = new Date();
+                    dataToParse.boundary = dataToParse.boundary.coordinates.map((coord: number[], index: number) => {
+                        const [longitude, latitude] = coord;
+                        // Criar timestamp progressivo se não tiver capturedAt
+                        const timestamp = dataToParse.capturedAt
+                            ? new Date(new Date(dataToParse.capturedAt).getTime() + (index * 1000)).toISOString()
+                            : new Date(now.getTime() + (index * 1000)).toISOString();
+    
+                        return {
+                            latitude,
+                            longitude,
+                            timestamp,
+                        };
+                    });
+                    console.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
+                } else {
+                    throw new BadRequestException('Formato GeoJSON inválido: boundary deve ter type="LineString" e coordinates array');
+                }
+            }*/
 
-                    return {
-                        latitude,
-                        longitude,
-                        timestamp,
-                    };
+        // Converter formato GeoJSON -> formato esperado (BoundaryPoint[]) se necessário
+        if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
+            try {
+                this.logger.log('🔄 Convertendo GeoJSON(LineString) para formato esperado...');
+                const converted = geoJsonLineStringToBoundaryPoints(dataToParse.boundary, {
+                    capturedAt: dataToParse.capturedAt,
+                    generateTimestamps: true,
                 });
-                console.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
-            } else {
-                throw new BadRequestException('Formato GeoJSON inválido: boundary deve ter type="LineString" e coordinates array');
-            }
-        }*/
 
-            // Converter formato GeoJSON -> formato esperado (BoundaryPoint[]) se necessário
-if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
-    try {
-      console.log('🔄 Convertendo GeoJSON(LineString) para formato esperado...');
-      const converted = geoJsonLineStringToBoundaryPoints(dataToParse.boundary, {
-        capturedAt: dataToParse.capturedAt,
-        generateTimestamps: true,
-      });
-  
-      // Simplificação leve para reduzir pontos muito próximos (opcional/segura)
-      // Ajuste o minDistanceMeters se quiser mais ou menos agressivo.
-      dataToParse.boundary = simplifyBoundaryPointsByDistance(converted, 3);
-      console.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
-    } catch (err: any) {
-      throw new BadRequestException(err?.message || 'Formato GeoJSON inválido para boundary');
-    }
-  }
-  
+                // Simplificação leve para reduzir pontos muito próximos (opcional/segura)
+                // Ajuste o minDistanceMeters se quiser mais ou menos agressivo.
+                dataToParse.boundary = simplifyBoundaryPointsByDistance(converted, 3);
+                this.logger.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
+            } catch (err: any) {
+                throw new BadRequestException(err?.message || 'Formato GeoJSON inválido para boundary');
+            }
+        }
+
 
         // Verificar boundary ANTES de converter para DTO
         if (dataToParse.boundary && Array.isArray(dataToParse.boundary) && dataToParse.boundary.length > 0) {
@@ -133,10 +135,10 @@ if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.i
         }
 
         // Se chegou aqui, não tem boundary nem path válido
-        console.error('❌ [RunsController] Formato inválido:');
-        console.error('   - dataToParse keys:', Object.keys(dataToParse));
-        console.error('   - dataToParse boundary type:', typeof dataToParse.boundary);
-        console.error('   - dataToParse:', JSON.stringify(dataToParse, null, 2).substring(0, 500));
+        this.logger.error('❌ Formato inválido');
+        this.logger.error(`   - dataToParse keys: ${Object.keys(dataToParse).join(', ')}`);
+        this.logger.error(`   - dataToParse boundary type: ${typeof dataToParse.boundary}`);
+        this.logger.error(`   - dataToParse: ${JSON.stringify(dataToParse, null, 2).substring(0, 500)}`);
         throw new BadRequestException('Formato inválido: forneça "boundary" (LineString) ou "path" (corrida simples)');
     }
 
