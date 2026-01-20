@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { UsersModule } from '../users/users.module';
@@ -14,9 +16,25 @@ import { LocalStrategy } from './strategies/local.strategy';
     UsersModule,
     PrismaModule,
     PassportModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'seu-secret-key-aqui-mude-em-producao',
-      signOptions: { expiresIn: '7d' },
+    ThrottlerModule.forRoot({
+      ttl: 60,
+      limit: 10,
+    }),
+    // JwtModule configurado via ConfigService (sem fallbacks hardcoded)
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => {
+        // JWT_SECRET é obrigatório e já validado na etapa anterior (env.validation.ts)
+        const jwtSecret = configService.get<string>('JWT_SECRET');
+        if (!jwtSecret) {
+          throw new Error('JWT_SECRET não encontrado. Verifique a configuração do ConfigModule.');
+        }
+        return {
+          secret: jwtSecret,
+          signOptions: { expiresIn: '7d' },
+        };
+      },
+      inject: [ConfigService],
     }),
   ],
   controllers: [AuthController],

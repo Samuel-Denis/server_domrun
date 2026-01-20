@@ -33,7 +33,7 @@ export class WeeklyRunService {
     }
 
     // 3. Buscar a corrida no sistema principal
-    const run = await this.prisma.client.run.findUnique({
+    const run = await this.prisma.run.findUnique({
       where: { id: runId },
       include: {
         pathPoints: {
@@ -61,7 +61,7 @@ export class WeeklyRunService {
     }
 
     // 5. Verificar se a corrida já foi submetida (unique constraint)
-    const existingRun = await this.prisma.client.weeklyRun.findUnique({
+    const existingRun = await this.prisma.weeklyRun.findUnique({
       where: { roomId_runId: { roomId: roomData.id, runId } },
     });
 
@@ -70,7 +70,7 @@ export class WeeklyRunService {
     }
 
     // Verificar também pelo unique global runId
-    const existingRunGlobal = await this.prisma.client.weeklyRun.findFirst({
+    const existingRunGlobal = await this.prisma.weeklyRun.findFirst({
       where: { runId },
     });
 
@@ -79,7 +79,7 @@ export class WeeklyRunService {
     }
 
     // 6. Buscar participante
-    const participant = await this.prisma.client.weeklyRoomParticipant.findFirst({
+    const participant = await this.prisma.weeklyRoomParticipant.findFirst({
       where: {
         userId,
         roomId: roomData.id,
@@ -91,7 +91,7 @@ export class WeeklyRunService {
     }
 
     // 7. Buscar liga para cálculos
-    const league = await this.prisma.client.league.findUnique({
+    const league = await this.prisma.league.findUnique({
       where: { id: roomData.leagueId },
     });
 
@@ -122,7 +122,7 @@ export class WeeklyRunService {
     // 11. Criar WeeklyRun
     const dayKey = generateDayKey(run.startTime);
 
-    const weeklyRun = await this.prisma.client.weeklyRun.create({
+    const weeklyRun = await this.prisma.weeklyRun.create({
       data: {
         participantId: participant.id,
         roomId: roomData.id,
@@ -159,7 +159,7 @@ export class WeeklyRunService {
       return [];
     }
 
-    const participant = await this.prisma.client.weeklyRoomParticipant.findFirst({
+    const participant = await this.prisma.weeklyRoomParticipant.findFirst({
       where: {
         userId,
         roomId: roomData.id,
@@ -170,7 +170,7 @@ export class WeeklyRunService {
       return [];
     }
 
-    const runs = await this.prisma.client.weeklyRun.findMany({
+      const runs = await this.prisma.weeklyRun.findMany({
       where: { participantId: participant.id },
       include: {
         room: {

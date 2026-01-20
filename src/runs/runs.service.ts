@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { RunsRepository } from './runs.repository';
 import { MapMatchingService } from './map-matching.service';
 import { CreateTerritoryDto } from './dto/create-territory.dto';
@@ -6,10 +6,15 @@ import { CreateRunDto } from './dto/create-run.dto';
 import { XpService } from '../users/xp.service';
 import { UploadService } from '../users/upload.service';
 import { AchievementsService } from '../users/achievements.service';
+import { RunsCalculationService } from './services/runs-calculation.service';
+import { TerritoryService } from './services/territory.service';
+import { boundaryPointsToPolygonWKT } from '../common/gis/gis.helpers';
 import * as turf from '@turf/turf';
 
 @Injectable()
 export class RunsService {
+    private readonly logger = new Logger(RunsService.name);
+
     constructor(
         private readonly runsRepository: RunsRepository,
         private readonly mapMatchingService: MapMatchingService,
@@ -18,6 +23,8 @@ export class RunsService {
         private readonly uploadService: UploadService,
         @Inject(forwardRef(() => AchievementsService))
         private readonly achievementsService: AchievementsService,
+        private readonly runsCalculationService: RunsCalculationService,
+        private readonly territoryService: TerritoryService,
     ) { }
 
     /**
@@ -31,30 +38,38 @@ export class RunsService {
                 throw new BadRequestException('Path deve ter pelo menos 2 pontos');
             }
 
-            console.log('🏃 Recebendo corrida simples do frontend:');
-            console.log(`   - Pontos: ${dto.path.length}`);
+            this.logger.log('🏃 Recebendo corrida simples do frontend');
+            this.logger.log(`   - Pontos: ${dto.path.length}`);
 
             // Processar timestamps
             const startTime = dto.startTime ? new Date(dto.startTime) : new Date();
             const endTime = dto.endTime ? new Date(dto.endTime) : undefined;
 
-            // Salvar imagem do mapa se foi fornecida (precisamos criar a corrida primeiro)
-            //  let mapImageUrl: string | null = null;
-
-            // Criar a corrida
-            const run = await this.runsRepository.saveSimpleRun({
-                userId: userId, // Usar userId do token autenticado
-                path: dto.path,
+            // Calcular estatísticas da corrida
+            const runStats = this.runsCalculationService.calculateRunStats(
+                dto.path,
+                {
+                    distance: dto.distance,
+                    duration: dto.duration,
+                    averagePace: dto.averagePace,
+                },
                 startTime,
                 endTime,
-                distance: dto.distance,
-                duration: dto.duration,
-                averagePace: dto.averagePace,
+            );
+
+            // Criar a corrida (dados já calculados)
+            const run = await this.runsRepository.saveSimpleRun({
+                userId: userId,
+                path: dto.path,
+                startTime,
+                endTime: runStats.calculatedEndTime,
+                distance: runStats.distance,
+                duration: runStats.duration,
+                averagePace: runStats.averagePace,
                 maxSpeed: dto.maxSpeed,
                 elevationGain: dto.elevationGain,
                 calories: dto.calories,
                 caption: dto.caption,
-                // mapImageUrl será atualizado depois se houver imagem
             });
 
             // Verificar conquistas relacionadas a corridas (assíncrono, não bloqueia)
@@ -64,10 +79,12 @@ export class RunsService {
                 averagePace: dto.averagePace,
                 startTime,
                 pathPoints: dto.path,
-            }).catch(err => console.error('Erro ao verificar conquistas:', err));
+            }).catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Verificar conquistas de marcos (nível pode ter mudado após XP ganho)
-            this.achievementsService.checkMilestoneAchievements(userId).catch(err => console.error('Erro ao verificar conquistas:', err));
+            this.achievementsService
+                .checkMilestoneAchievements(userId)
+                .catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Salvar imagem do mapa após criar a corrida
             /*  if (mapImage) {
@@ -88,7 +105,7 @@ export class RunsService {
             };
 
         } catch (error: any) {
-            console.error('❌ Erro ao criar corrida simples:', error.message);
+            this.logger.error('❌ Erro ao criar corrida simples', error?.stack || error);
 
             if (error instanceof BadRequestException) {
                 throw error;
@@ -103,10 +120,10 @@ export class RunsService {
             // Validar boundary (LineString - não fechada, mínimo 2 pontos)
             this.validateBoundary(dto.boundary);
 
-            console.log('📥 Recebendo território do frontend:');
-            console.log(`   - Tipo: LineString (${dto.boundary.length} pontos)`);
-            console.log(`   - Usuário: ${dto.userName}`);
-            console.log(`   - Área: ${dto.areaName}`);
+            this.logger.log('📥 Recebendo território do frontend');
+            this.logger.log(`   - Tipo: LineString (${dto.boundary.length} pontos)`);
+            this.logger.log(`   - Usuário: ${dto.userName}`);
+            this.logger.log(`   - Área: ${dto.areaName}`);
             //  console.log(`   - Imagem do mapa: ${mapImage ? 'Sim' : 'Não'}`);
 
             // Aplicar Map Matching para corrigir erros de GPS e alinhar com as ruas
@@ -114,7 +131,7 @@ export class RunsService {
 
             if (this.mapMatchingService.isAvailable() && dto.boundary.length >= 2) {
                 try {
-                    console.log('🗺️ Aplicando Map Matching para corrigir trajeto...');
+                    this.logger.log('🗺️ Aplicando Map Matching para corrigir trajeto...');
                     // Timeout de 30 segundos para Map Matching
                     const mapMatchingPromise = this.mapMatchingService.matchTrace(dto.boundary, 'walking');
                     const timeoutPromise = new Promise((_, reject) =>
@@ -122,22 +139,22 @@ export class RunsService {
                     );
 
                     correctedBoundary = await Promise.race([mapMatchingPromise, timeoutPromise]) as typeof dto.boundary;
-                    console.log(`✅ Trajeto corrigido: ${dto.boundary.length} → ${correctedBoundary.length} pontos`);
+                    this.logger.log(`✅ Trajeto corrigido: ${dto.boundary.length} → ${correctedBoundary.length} pontos`);
                 } catch (error: any) {
-                    console.warn('⚠️ Erro ao aplicar Map Matching, usando pontos originais:', error.message);
+                    this.logger.warn(`⚠️ Erro ao aplicar Map Matching, usando pontos originais: ${error?.message || error}`);
                     // Continuar com pontos originais em caso de erro ou timeout
                     correctedBoundary = dto.boundary;
                 }
             } else {
                 if (!this.mapMatchingService.isAvailable()) {
-                    console.log('ℹ️ Map Matching não disponível (token não configurado)');
+                    this.logger.log('ℹ️ Map Matching não disponível (token não configurado)');
                 }
             }
 
             // Criar território com os pontos corrigidos
             // Timeout total de 60 segundos para operação completa
             const territoryResult = await Promise.race([
-                this.runsRepository.createTerritoryWithBoundary({
+                this.territoryService.createTerritory({
                     ...dto,
                     boundary: correctedBoundary, // Usar pontos corrigidos
                     userId,
@@ -168,19 +185,21 @@ export class RunsService {
             let xpResult: Awaited<ReturnType<typeof this.xpService.addXp>> | null = null;
             try {
                 xpResult = await this.xpService.addXp(userId, 50);
-                console.log(`✨ ${userId} ganhou 50 XP! Nível: ${xpResult.previousLevel} → ${xpResult.newLevel}`);
+                this.logger.log(`✨ ${userId} ganhou 50 XP! Nível: ${xpResult.previousLevel} → ${xpResult.newLevel}`);
             } catch (xpError: any) {
-                console.warn('⚠️ Erro ao adicionar XP:', xpError.message);
+                this.logger.warn(`⚠️ Erro ao adicionar XP: ${xpError?.message || xpError}`);
             }
 
             // Verificar conquistas relacionadas a territórios (assíncrono, não bloqueia)
             this.achievementsService.checkTerritoryAchievements(userId, {
                 area: territoryResult.area,
                 stolen: false, // TODO: Detectar se roubou território de outro jogador
-            }).catch(err => console.error('Erro ao verificar conquistas de território:', err));
+            }).catch(err => this.logger.error('Erro ao verificar conquistas de território', err?.stack || err));
 
             // Verificar conquistas de marcos (nível pode ter mudado após XP ganho)
-            this.achievementsService.checkMilestoneAchievements(userId).catch(err => console.error('Erro ao verificar conquistas:', err));
+            this.achievementsService
+                .checkMilestoneAchievements(userId)
+                .catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
             // Montar resposta com XP e imagem do mapa
             return {
@@ -195,7 +214,7 @@ export class RunsService {
             };
 
         } catch (error: any) {
-            console.error('❌ Erro ao criar território:', error.message);
+            this.logger.error('❌ Erro ao criar território', error?.stack || error);
 
             // Sempre retornar um erro HTTP adequado para o frontend
             if (error instanceof BadRequestException) {
@@ -222,7 +241,7 @@ export class RunsService {
         );
 
         if (!isOrdered) {
-            console.warn('⚠️ Pontos não estão em ordem cronológica, reordenando...');
+            this.logger.warn('⚠️ Pontos não estão em ordem cronológica, reordenando...');
             boundary.sort((a, b) =>
                 new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
             );
@@ -240,7 +259,7 @@ export class RunsService {
         // Permitir primeiro e último ponto iguais - o backend vai tratar como circuito fechado
         // Não rejeitar aqui, apenas logar informação
         if (latEqual && lngEqual) {
-            console.log('ℹ️ Boundary recebido com primeiro e último ponto iguais (circuito fechado)');
+            this.logger.log('ℹ️ Boundary recebido com primeiro e último ponto iguais (circuito fechado)');
         }
 
         // Validar coordenadas
@@ -258,20 +277,51 @@ export class RunsService {
         if (path.length < 3) throw new BadRequestException('Caminho muito curto');
 
         // Lógica de Snap-to-Close (30 metros de tolerância)
-        const start = turf.point([path[0].longitude, path[0].latitude]);// está pegando o primeiro ponto da corrida no array 
-        const end = turf.point([path[path.length - 1].longitude, path[path.length - 1].latitude]); // está pegando o último ponto da corrida no array
-        const distance = turf.distance(start, end, { units: 'meters' }); // calcula a distância entre o primeiro e o último ponto em metros
+        const start = turf.point([path[0].longitude, path[0].latitude]);
+        const end = turf.point([path[path.length - 1].longitude, path[path.length - 1].latitude]);
+        const distance = turf.distance(start, end, { units: 'meters' });
 
         if (distance > 30) {
-            await this.runsRepository.saveRun(userId, path); // salva a corrida sem conquistar território
+            // Calcular estatísticas da corrida
+            const startTime = new Date();
+            const runStats = this.runsCalculationService.calculateRunStats(
+                path,
+                {},
+                startTime,
+            );
+
+            // Salvar corrida sem conquistar território
+            await this.runsRepository.saveRun(userId, path, {
+                startTime,
+                endTime: runStats.calculatedEndTime,
+                distance: runStats.distance,
+                duration: runStats.duration,
+                averagePace: runStats.averagePace,
+            });
+
             return { message: 'Corrida salva, mas não fechou área.', conquered: false };
         }
 
-        // Fecha o polígono para o PostGIS
-        const closedPath = [...path, path[0]]; // fecha o polígono adicionando o primeiro ponto ao final
-        const wkt = `POLYGON((${closedPath.map(p => `${p.longitude} ${p.latitude}`).join(',')}))`; // converte o caminho fechado para o formato WKT
+        // Fecha o polígono para o PostGIS usando helper GIS
+        const wkt = boundaryPointsToPolygonWKT(path);
 
-        await this.runsRepository.conquerTerritory(userId, wkt, path); // conquista o território e salva a corrida
+        // Calcular estatísticas da corrida
+        const startTime = new Date();
+        const runStats = this.runsCalculationService.calculateRunStats(
+            path,
+            {},
+            startTime,
+        );
+
+        // Conquistar território e salvar a corrida
+        await this.runsRepository.conquerTerritory(userId, wkt, path, {
+            startTime,
+            endTime: runStats.calculatedEndTime,
+            distance: runStats.distance,
+            duration: runStats.duration,
+            averagePace: runStats.averagePace,
+        });
+
         return { message: 'Território conquistado!', conquered: true };
     }
 

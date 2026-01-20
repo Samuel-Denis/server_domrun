@@ -3,6 +3,7 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { Prisma, AchievementStatus } from '@prisma/client';
 import { UploadService } from './upload.service';
 import { StatsService } from './stats.service';
 import { AchievementsService } from './achievements.service';
@@ -21,7 +22,7 @@ export class UsersService {
 
   async create({ username, email, password, name }: CreateUserDto) {
     // Buscar a primeira liga (STARTER) para atribuir ao novo usuário
-    const starterLeague = await this.prisma.client.league.findFirst({
+    const starterLeague = await this.prisma.league.findFirst({
       where: {
         code: 'STARTER',
       },
@@ -31,13 +32,13 @@ export class UsersService {
     });
 
     // Se não encontrar STARTER, busca a primeira liga por ordem (fallback)
-    const defaultLeague = starterLeague || await this.prisma.client.league.findFirst({
+    const defaultLeague = starterLeague || await this.prisma.league.findFirst({
       orderBy: {
         order: 'asc',
       },
     });
 
-    return this.prisma.client.user.create({
+    return this.prisma.user.create({
       data: {
         username,
         email,
@@ -49,19 +50,19 @@ export class UsersService {
   }
 
   async findByUsername(username: string) {
-    return this.prisma.client.user.findUnique({
+    return this.prisma.user.findUnique({
       where: { username }
     });
   }
 
   async findByEmail(email: string) {
-    return this.prisma.client.user.findUnique({
+    return this.prisma.user.findUnique({
       where: { email }
     });
   }
 
   async findById(id: string) {
-    return this.prisma.client.user.findUnique({
+    return this.prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
@@ -94,7 +95,8 @@ export class UsersService {
   }
 
   async getUserByIdComplete(userId: string) {
-    const user = await this.prisma.client.user.findUnique({
+      console.log('chegou aqui 2'+ userId);
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -198,13 +200,13 @@ export class UsersService {
     }
 
     // Calcular área total de territórios (em m²)
-    const territoryAreaResult = await this.prisma.client.territory.aggregate({
+    const territoryAreaResult = await this.prisma.territory.aggregate({
       where: { userId },
       _sum: { area: true },
     });
     const totalTerritoryAreaM2 = territoryAreaResult._sum.area || 0;
 
-    // Buscar territórios com boundary (geometria PostGIS convertida para array de pontos)
+    // Buscar territórios com geometria GeoJSON
     const territoriesWithBoundary = await this.getTerritoriesWithBoundary(userId);
 
     // Calcular informações de XP
@@ -219,49 +221,28 @@ export class UsersService {
   }
 
   /**
-   * Converte GeoJSON Polygon para formato boundary (array de pontos)
-   * 
-   * Após processamento PostGIS, o território é um Polygon bufferizado.
-   * Este método extrai o ring externo do polígono e converte de volta para
-   * o formato boundary que o frontend espera.
-   * 
-   * @param geoJson - GeoJSON Polygon retornado do PostGIS (ST_AsGeoJSON)
-   * @returns Array de pontos no formato {latitude, longitude, timestamp}
+   * @deprecated Este método foi removido em favor de retornar GeoJSON diretamente.
+   * Use geometryGeoJson no retorno dos territórios.
    */
-  private geoJsonToBoundaryPoints(geoJson: any): Array<{ latitude: number; longitude: number; timestamp?: string }> {
-    // Valida se é um Polygon válido
-    if (!geoJson || geoJson.type !== 'Polygon') {
-      return [];
-    }
-
-    // GeoJSON Polygon structure:
-    // {
-    //   type: "Polygon",
-    //   coordinates: [
-    //     [[lng, lat], [lng, lat], ...],  // Ring externo (boundary)
-    //     [[lng, lat], ...]                // Holes (não usados aqui)
-    //   ]
-    // }
-    // coordinates[0] é o ring externo (contorno do polígono)
-    const coordinates = geoJson.coordinates[0] as number[][];
-
-    // Converte cada coordenada [lng, lat] para {latitude, longitude, timestamp}
-    return coordinates.map((coord) => ({
-      latitude: coord[1], // GeoJSON usa [longitude, latitude] (invertido do formato comum)
-      longitude: coord[0],
-      timestamp: new Date().toISOString(), // Timestamp aproximado (não preservado do original)
-    }));
-  }
 
   /**
-   * Busca territórios do usuário com boundary (geometria convertida para array de pontos)
+   * Busca territórios do usuário com geometria em GeoJSON
    * 
    * @param userId - ID do usuário
-   * @returns Array de territórios com boundary incluído
+   * @param simplifyTolerance - Tolerância para simplificação (metros). Se fornecido, aplica ST_SimplifyPreserveTopology.
+   *                            Recomendado: 5-20 metros para reduzir pontos sem perder detalhes visuais.
+   * @returns Array de territórios com geometryGeoJson incluído (GeoJSON Polygon)
    */
-  private async getTerritoriesWithBoundary(userId: string) {
+  private async getTerritoriesWithBoundary(userId: string, simplifyTolerance?: number) {
+    // Aplicar simplificação se solicitado
+    // ST_SimplifyPreserveTopology reduz pontos mantendo topologia (melhor que ST_Simplify)
+    // A tolerância é em metros (para geometria em SRID 3857 - Web Mercator)
+    const geometrySelect = simplifyTolerance !== undefined && simplifyTolerance > 0
+      ? Prisma.sql`ST_AsGeoJSON(ST_SimplifyPreserveTopology(t.geometry, ${simplifyTolerance}))::json`
+      : Prisma.sql`ST_AsGeoJSON(t.geometry)::json`;
+
     // Buscar territórios com geometria em GeoJSON usando SQL raw
-    const territoriesRaw = await this.prisma.client.$queryRawUnsafe(`
+    const territoriesRaw = await this.prisma.$queryRaw(Prisma.sql`
       SELECT 
         t.id,
         t."userId",
@@ -272,34 +253,38 @@ export class UsersService {
         t."capturedAt",
         t."createdAt",
         t."updatedAt",
-        ST_AsGeoJSON(t.geometry)::json as geometry_geojson
+        ${geometrySelect} as geometry_geojson
       FROM territories t
-      WHERE t."userId" = $1
+      WHERE t."userId" = ${userId}::text
       ORDER BY t."createdAt" DESC
-    `, userId) as any[];
+    `) as any[];
 
-    // Converter GeoJSON para boundary e formatar retorno
-    return territoriesRaw.map((t) => {
-      const geoJson = t.geometry_geojson;
-      const boundary = this.geoJsonToBoundaryPoints(geoJson);
-
-      return {
-        id: t.id,
-        userId: t.userId,
-        userName: t.userName,
-        userColor: t.userColor,
-        areaName: t.areaName,
-        area: t.area ? parseFloat(t.area) : null,
-        capturedAt: t.capturedAt,
-        createdAt: t.createdAt,
-        updatedAt: t.updatedAt,
-        boundary,
-      };
-    });
+    // Retornar GeoJSON diretamente (sem converter para boundary points)
+    return territoriesRaw.map((t) => ({
+      id: t.id,
+      userId: t.userId,
+      userName: t.userName,
+      userColor: t.userColor,
+      areaName: t.areaName,
+      area: t.area ? parseFloat(t.area) : null,
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+      geometryGeoJson: t.geometry_geojson, // GeoJSON Polygon limpo
+    }));
   }
 
-  async getPublicUserById(userId: string) {
-    const user = await this.prisma.client.user.findUnique({
+  /**
+   * Busca perfil público do usuário
+   * Por padrão retorna apenas dados básicos (otimizado)
+   * Use full=true para obter dados completos (runs, territories, achievements)
+   * 
+   * @param userId - ID do usuário
+   * @param full - Se true, retorna dados completos
+   * @param simplifyTolerance - Tolerância de simplificação em metros (opcional, apenas quando full=true)
+   */
+  async getPublicUserById(userId: string, full: boolean = false, simplifyTolerance?: number) {
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {
         id: true,
@@ -310,16 +295,20 @@ export class UsersService {
         biography: true,
         level: true,
         createdAt: true,
-        league: true,
+        league: {
+          select: {
+            id: true,
+            code: true,
+            displayName: true,
+            order: true,
+            isChampion: true,
+            shieldName: true,
+            shieldAsset: true,
+          },
+        },
         winStreak: true,
         trophies: true,
         xp: true,
-        lastLogin: true,
-        updatedAt: true,
-        territories: true,
-        runs: true,
-        userAchievements: true,
-        battlesWon: true,
         battleWins: true,
         battleLosses: true,
         // Não incluir: email, password, updatedAt, lastLogin e outros dados sensíveis
@@ -330,21 +319,87 @@ export class UsersService {
       throw new NotFoundException('Usuário não encontrado');
     }
 
-    // Calcular área total de territórios (em m²)
-    const territoryAreaResult = await this.prisma.client.territory.aggregate({
+    // Calcular área total de territórios (em m²) - sempre necessário para estatísticas
+    const territoryAreaResult = await this.prisma.territory.aggregate({
       where: { userId },
       _sum: { area: true },
+      _count: { id: true },
     });
     const totalTerritoryAreaM2 = territoryAreaResult._sum.area || 0;
+    const territoriesCount = territoryAreaResult._count.id || 0;
+
+    // Contagem de runs (sempre retornar para estatísticas)
+    const runsCount = await this.prisma.run.count({
+      where: { userId },
+    });
+
+    // Contagem de conquistas (sempre retornar para estatísticas)
+    const achievementsCount = await this.prisma.userAchievement.count({
+      where: { 
+        userId,
+        status: AchievementStatus.CLAIMED,
+      },
+    });
 
     // Calcular informações de XP
     const xpInfo = await this.xpService.getXpInfo(userId);
 
-    return {
+    // Resposta base (sempre retornada)
+    const baseResponse = {
       ...user,
       totalTerritoryAreaM2: Number(totalTerritoryAreaM2.toFixed(2)),
+      territoriesCount,
+      runsCount,
+      achievementsCount,
       xpInfo,
     };
+
+    // Se full=true, incluir dados completos
+    if (full) {
+      // Buscar territórios completos com geometria GeoJSON (com simplificação opcional)
+      const territoriesWithBoundary = await this.getTerritoriesWithBoundary(userId, simplifyTolerance);
+
+      // Buscar runs completas (apenas últimas 10 para não sobrecarregar)
+      const runs = await this.prisma.run.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          userId: true,
+          startTime: true,
+          endTime: true,
+          distance: true,
+          duration: true,
+          averagePace: true,
+          maxSpeed: true,
+          elevationGain: true,
+          calories: true,
+          caption: true,
+          territoryId: true,
+          mapImageUrl: true,
+          mapImageCleanUrl: true,
+          createdAt: true,
+          // Não incluir pathPoints por padrão (muito pesado)
+          // Se necessário, criar endpoint específico para pathPoints
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: 10, // Limitar a 10 últimas runs
+      });
+
+      // Buscar conquistas completas
+      const achievements = await this.achievementsService.getUserAchievementsLight(userId);
+
+      return {
+        ...baseResponse,
+        territories: territoriesWithBoundary,
+        runs,
+        achievements,
+      };
+    }
+
+    // Retornar apenas dados básicos (otimizado)
+    return baseResponse;
   }
 
   async updateProfile(
@@ -399,7 +454,7 @@ export class UsersService {
     }
 
     // Atualizar o usuário
-    const updatedUser = await this.prisma.client.user.update({
+    const updatedUser = await this.prisma.user.update({
       where: { id: userId },
       data: updateData,
       select: {
@@ -421,7 +476,7 @@ export class UsersService {
   }
 
   async updateLastLogin(userId: string) {
-    await this.prisma.client.user.update({
+    await this.prisma.user.update({
       where: { id: userId },
       data: { lastLogin: new Date() },
     });
@@ -475,7 +530,7 @@ export class UsersService {
 
   async getUserRuns(userId: string, limit = 20, offset = 0) {
     const [runs, total] = await Promise.all([
-      this.prisma.client.run.findMany({
+      this.prisma.run.findMany({
         where: { userId },
         orderBy: { startTime: 'desc' },
         take: limit,
@@ -487,7 +542,7 @@ export class UsersService {
           },
         },
       }),
-      this.prisma.client.run.count({ where: { userId } }),
+      this.prisma.run.count({ where: { userId } }),
     ]);
 
     return {
@@ -495,6 +550,141 @@ export class UsersService {
       total,
       limit,
       offset,
+    };
+  }
+
+  /**
+   * Busca runs do usuário com paginação cursor-based (otimizada)
+   * 
+   * @param userId - ID do usuário
+   * @param take - Número de itens por página (padrão: 20, máximo: 100)
+   * @param cursor - ID da última run da página anterior (opcional)
+   * @returns Objeto com runs e nextCursor para próxima página
+   */
+  async getUserRunsCursorBased(userId: string, take: number = 20, cursor?: string) {
+    // Validar take
+    const validTake = Math.min(Math.max(1, take), 100);
+
+    // Construir where clause
+    const where = cursor
+      ? {
+          userId,
+          id: {
+            lt: cursor, // Menor que cursor (para ordem desc)
+          },
+        }
+      : { userId };
+
+    // Buscar runs (ordem por createdAt desc, usar id como cursor)
+    const runs = await this.prisma.run.findMany({
+      where,
+      orderBy: [
+        { createdAt: 'desc' },
+        { id: 'desc' }, // Ordem secundária para garantir consistência
+      ],
+      take: validTake + 1, // Buscar um a mais para saber se há próxima página
+      select: {
+        id: true,
+        userId: true,
+        startTime: true,
+        endTime: true,
+        distance: true,
+        duration: true,
+        averagePace: true,
+        maxSpeed: true,
+        elevationGain: true,
+        calories: true,
+        caption: true,
+        territoryId: true,
+        mapImageUrl: true,
+        mapImageCleanUrl: true,
+        createdAt: true,
+        // Não incluir pathPoints por padrão (muito pesado)
+        // Criar endpoint separado se necessário
+      },
+    });
+
+    // Verificar se há próxima página
+    const hasNextPage = runs.length > validTake;
+    const results = hasNextPage ? runs.slice(0, validTake) : runs;
+
+    // Próximo cursor = id da última run da página atual
+    const nextCursor = hasNextPage ? results[results.length - 1].id : null;
+
+    return {
+      runs: results,
+      nextCursor,
+      hasNextPage,
+      count: results.length,
+    };
+  }
+
+  /**
+   * Busca territórios do usuário com paginação cursor-based
+   * 
+   * @param userId - ID do usuário
+   * @param take - Número de itens por página (padrão: 20, máximo: 100)
+   * @param cursor - ID do último território da página anterior (opcional)
+   * @param simplifyTolerance - Tolerância para simplificação em metros (opcional). Se fornecido, aplica ST_SimplifyPreserveTopology.
+   * @returns Objeto com territories e nextCursor para próxima página
+   */
+  async getUserTerritoriesCursorBased(userId: string, take: number = 20, cursor?: string, simplifyTolerance?: number) {
+    // Validar take
+    const validTake = Math.min(Math.max(1, take), 100);
+
+    // Aplicar simplificação se solicitado
+    // ST_SimplifyPreserveTopology reduz pontos mantendo topologia (melhor que ST_Simplify)
+    // A tolerância é em metros (para geometria em SRID 3857 - Web Mercator)
+    const geometrySelect = simplifyTolerance !== undefined && simplifyTolerance > 0
+      ? Prisma.sql`ST_AsGeoJSON(ST_SimplifyPreserveTopology(t.geometry, ${simplifyTolerance}))::json`
+      : Prisma.sql`ST_AsGeoJSON(t.geometry)::json`;
+
+    // Buscar territórios (ordem por createdAt desc, usar id como cursor)
+    const territoriesRaw = await this.prisma.$queryRaw(Prisma.sql`
+      SELECT 
+        t.id,
+        t."userId",
+        t."userName",
+        t."userColor",
+        t."areaName",
+        t.area,
+        t."capturedAt",
+        t."createdAt",
+        t."updatedAt",
+        ${geometrySelect} as geometry_geojson
+      FROM territories t
+      WHERE t."userId" = ${userId}::uuid
+        ${cursor ? Prisma.sql`AND t.id < ${cursor}::uuid` : Prisma.empty}
+      ORDER BY t."createdAt" DESC, t.id DESC
+      LIMIT ${validTake + 1}
+    `) as any[];
+
+    // Verificar se há próxima página
+    const hasNextPage = territoriesRaw.length > validTake;
+    const resultsRaw = hasNextPage ? territoriesRaw.slice(0, validTake) : territoriesRaw;
+
+    // Retornar GeoJSON diretamente (sem converter para boundary points)
+    const territories = resultsRaw.map((t) => ({
+      id: t.id,
+      userId: t.userId,
+      userName: t.userName,
+      userColor: t.userColor,
+      areaName: t.areaName,
+      area: parseFloat(t.area),
+      geometryGeoJson: t.geometry_geojson, // GeoJSON Polygon limpo
+      capturedAt: t.capturedAt,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    }));
+
+    // Próximo cursor = id do último território da página atual
+    const nextCursor = hasNextPage ? territories[territories.length - 1].id : null;
+
+    return {
+      territories,
+      nextCursor,
+      hasNextPage,
+      count: territories.length,
     };
   }
 
@@ -515,7 +705,7 @@ export class UsersService {
   }
 
   async getTrophyRanking(limit: number = 10) {
-    const users = await this.prisma.client.user.findMany({
+      const users = await this.prisma.user.findMany({
       take: limit,
       orderBy: {
         trophies: 'desc',

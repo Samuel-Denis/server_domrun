@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { BattleScoreService } from './battle-score.service';
 import { TrophyService } from './trophy.service';
 import { AntiCheatService, AntiCheatResult } from './anti-cheat.service';
@@ -29,7 +30,7 @@ export class BattleService {
    * Filtro: diferença máxima de ±200 troféus
    */
   async findOpponent(userId: string, mode: string): Promise<string | null> {
-    const user = await this.prisma.client.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { trophies: true },
     });
@@ -43,21 +44,17 @@ export class BattleService {
     const maxTrophies = user.trophies + this.MATCHMAKING_TROPHY_RANGE;
 
     // Procura jogadores buscando match no mesmo modo usando SQL direto
-    const waitingBattles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT b.* FROM battles b
+    const waitingBattles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT b.* FROM battles b
        INNER JOIN users u ON b."player1Id" = u.id
        WHERE b.status = 'SEARCHING' 
-         AND b.mode = $1 
-         AND b."player1Id" != $2
-         AND u.trophies >= $3
-         AND u.trophies <= $4
+         AND b.mode = ${mode}
+         AND b."player1Id" != ${userId}::uuid
+         AND u.trophies >= ${minTrophies}
+         AND u.trophies <= ${maxTrophies}
        ORDER BY b."createdAt" ASC
-       LIMIT 1`,
-      mode,
-      userId,
-      minTrophies,
-      maxTrophies
-    );
+       LIMIT 1
+    `);
     
     if (waitingBattles.length === 0) {
       return null; // Nenhum oponente encontrado
@@ -68,13 +65,29 @@ export class BattleService {
 
   /**
    * Cria uma nova batalha ou faz match com uma existente
+   * 
+   * OPERAÇÃO ATÔMICA: Usa transação + SELECT FOR UPDATE SKIP LOCKED para evitar race conditions.
+   * 
+   * Fluxo seguro:
+   * 1. Verifica se usuário já está em batalha ativa
+   * 2. Dentro de transação:
+   *    - Busca oponente com SELECT FOR UPDATE SKIP LOCKED (lockea e remove da fila)
+   *    - Atualiza battle com UPDATE condicional (só atualiza se ainda está SEARCHING)
+   *    - Se não encontrou oponente, cria nova battle
+   * 
+   * Isso garante que:
+   * - Dois jogadores não pegam o mesmo oponente simultaneamente
+   * - Battle não é atualizada por múltiplos jogadores ao mesmo tempo
+   * - Operação é atômica (tudo ou nada)
    */
   async joinQueue(userId: string, mode: string): Promise<BattleResponseDto> {
-    // Verifica se o usuário já está em uma batalha ativa usando SQL raw
-    const activeBattles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT * FROM battles WHERE ("player1Id" = $1 OR "player2Id" = $1) AND status IN ('SEARCHING', 'IN_PROGRESS') LIMIT 1`,
-      userId
-    );
+    // Verifica se o usuário já está em uma batalha ativa (fora da transação, é apenas consulta)
+    const activeBattles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM battles 
+      WHERE ("player1Id" = ${userId}::uuid OR "player2Id" = ${userId}::uuid) 
+        AND status IN ('SEARCHING', 'IN_PROGRESS') 
+      LIMIT 1
+    `);
     
     if (activeBattles.length > 0) {
       const activeBattle = activeBattles[0];
@@ -82,41 +95,78 @@ export class BattleService {
       return await this.getBattleResponse(activeBattle.id);
     }
 
-    // Tenta encontrar um oponente
-    const opponentId = await this.findOpponent(userId, mode);
+    // Buscar dados do usuário para matchmaking
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { trophies: true },
+    });
 
-    if (opponentId) {
-      // Encontrou oponente - busca a batalha dele e atualiza
-      const opponentBattles = await this.prisma.client.$queryRawUnsafe<any[]>(
-        `SELECT * FROM battles WHERE status = 'SEARCHING' AND mode = $1 AND "player1Id" = $2 LIMIT 1`,
-        mode,
-        opponentId
-      );
-      
-      if (opponentBattles.length > 0) {
-        const opponentBattle = opponentBattles[0];
-        
-        // Atualiza a batalha existente
-        await this.prisma.client.$executeRawUnsafe(
-          `UPDATE battles SET "player2Id" = $1, status = 'IN_PROGRESS', "updatedAt" = NOW() WHERE id = $2`,
-          userId,
-          opponentBattle.id
-        );
-        
-        return await this.getBattleResponse(opponentBattle.id);
-      }
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado');
     }
-    
-    // Não encontrou oponente - cria nova batalha em busca
-    const battleId = randomUUID();
-    await this.prisma.client.$executeRawUnsafe(
-      `INSERT INTO battles (id, "player1Id", mode, status, "createdAt", "updatedAt")
-       VALUES ($1, $2, $3, 'SEARCHING', NOW(), NOW())`,
-      battleId,
-      userId,
-      mode
-    );
-    
+
+    // Calcular range de troféus para matchmaking
+    const minTrophies = Math.max(0, user.trophies - this.MATCHMAKING_TROPHY_RANGE);
+    const maxTrophies = user.trophies + this.MATCHMAKING_TROPHY_RANGE;
+
+    // OPERAÇÃO ATÔMICA: Tudo dentro de uma transação com locks
+    const battleId = await this.prisma.$transaction(async (tx) => {
+      // Passo 1: Tentar encontrar e lockear uma battle disponível
+      // SELECT FOR UPDATE SKIP LOCKED:
+      // - FOR UPDATE: lockea a linha selecionada exclusivamente
+      // - SKIP LOCKED: pula linhas já lockeadas por outras transações (evita espera/deadlock)
+      // Isso garante que apenas UMA transação pegue cada battle disponível
+      const availableBattles = await tx.$queryRaw<any[]>(Prisma.sql`
+        SELECT b.id, b."player1Id"
+        FROM battles b
+        INNER JOIN users u ON b."player1Id" = u.id
+        WHERE b.status = 'SEARCHING'
+          AND b.mode = ${mode}
+          AND b."player1Id" != ${userId}::uuid
+          AND u.trophies >= ${minTrophies}
+          AND u.trophies <= ${maxTrophies}
+        ORDER BY b."createdAt" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      `);
+
+      if (availableBattles.length > 0) {
+        // Passo 2: Encontrou oponente - atualizar battle de forma atômica
+        // UPDATE condicional: só atualiza se ainda está em SEARCHING (double-check de segurança)
+        // Isso evita edge case onde battle foi atualizada entre SELECT e UPDATE
+        const battle = availableBattles[0];
+        
+        const updateResult = await tx.$executeRaw(Prisma.sql`
+          UPDATE battles
+          SET 
+            "player2Id" = ${userId}::uuid,
+            status = 'IN_PROGRESS',
+            "updatedAt" = NOW()
+          WHERE id = ${battle.id}::uuid
+            AND status = 'SEARCHING'
+            AND "player2Id" IS NULL
+        `);
+
+        // Verificar se a atualização foi bem-sucedida (linhas afetadas)
+        // Se retornar 0 linhas, significa que battle já foi atualizada (edge case raro)
+        if (updateResult > 0) {
+          // Sucesso! Battle atualizada - retornar ID para buscar dados depois
+          return battle.id;
+        }
+        // Se updateResult === 0, continua para criar nova battle (fallback seguro)
+      }
+
+      // Passo 3: Não encontrou oponente (ou oponente foi pego por outro) - criar nova battle
+      const newBattleId = randomUUID();
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO battles (id, "player1Id", mode, status, "createdAt", "updatedAt")
+        VALUES (${newBattleId}::uuid, ${userId}::uuid, ${mode}, 'SEARCHING', NOW(), NOW())
+      `);
+
+      return newBattleId;
+    });
+
+    // Buscar dados completos FORA da transação (locks já foram liberados)
     return await this.getBattleResponse(battleId);
   }
 
@@ -124,8 +174,8 @@ export class BattleService {
    * Busca dados completos de uma batalha formatados
    */
   private async getBattleResponse(battleId: string): Promise<BattleResponseDto> {
-    const battles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT 
+    const battles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 
         b.*,
         json_build_object(
           'id', p1.id, 'username', p1.username, 'name', p1.name, 
@@ -143,9 +193,8 @@ export class BattleService {
        FROM battles b
        INNER JOIN users p1 ON b."player1Id" = p1.id
        LEFT JOIN users p2 ON b."player2Id" = p2.id
-       WHERE b.id = $1`,
-      battleId
-    );
+       WHERE b.id = ${battleId}::uuid
+    `);
 
     if (battles.length === 0) {
       throw new NotFoundException('Batalha não encontrada');
@@ -168,16 +217,15 @@ export class BattleService {
     dto: SubmitBattleResultDto,
   ): Promise<BattleResultDto> {
     // Busca a batalha
-    const battles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT b.*, 
+    const battles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT b.*, 
         json_build_object('id', p1.id, 'trophies', p1.trophies) as player1_data,
         json_build_object('id', p2.id, 'trophies', p2.trophies) as player2_data
        FROM battles b
        INNER JOIN users p1 ON b."player1Id" = p1.id
        INNER JOIN users p2 ON b."player2Id" = p2.id
-       WHERE b.id = $1`,
-      dto.battleId
-    );
+       WHERE b.id = ${dto.battleId}::uuid
+    `);
 
     if (battles.length === 0) {
       throw new NotFoundException('Batalha não encontrada');
@@ -218,24 +266,20 @@ export class BattleService {
     const p1Score = isPlayer1 ? battleScore : (battle.p1Score || null);
     const p2Score = !isPlayer1 ? battleScore : (battle.p2Score || null);
 
-    await this.prisma.client.$executeRawUnsafe(
-      `UPDATE battles SET "p1Score" = $1, "p2Score" = $2, "updatedAt" = NOW() WHERE id = $3`,
-      p1Score,
-      p2Score,
-      dto.battleId
-    );
+    await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE battles SET "p1Score" = ${p1Score}, "p2Score" = ${p2Score}, "updatedAt" = NOW() WHERE id = ${dto.battleId}::uuid
+    `);
 
     // Verifica se ambos os jogadores já submeteram
-    const updatedBattles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT b.*, 
+    const updatedBattles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT b.*, 
         json_build_object('id', p1.id, 'trophies', p1.trophies) as player1_data,
         json_build_object('id', p2.id, 'trophies', p2.trophies) as player2_data
        FROM battles b
        INNER JOIN users p1 ON b."player1Id" = p1.id
        INNER JOIN users p2 ON b."player2Id" = p2.id
-       WHERE b.id = $1`,
-      dto.battleId
-    );
+       WHERE b.id = ${dto.battleId}::uuid
+    `);
 
     const updatedBattle = updatedBattles[0];
 
@@ -277,16 +321,15 @@ export class BattleService {
     player1AntiCheat: AntiCheatResult,
     player2AntiCheat: AntiCheatResult,
   ): Promise<BattleResultDto> {
-    const battles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT b.*,
+    const battles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT b.*,
         json_build_object('id', p1.id, 'trophies', p1.trophies) as player1_data,
         json_build_object('id', p2.id, 'trophies', p2.trophies) as player2_data
        FROM battles b
        INNER JOIN users p1 ON b."player1Id" = p1.id
        INNER JOIN users p2 ON b."player2Id" = p2.id
-       WHERE b.id = $1`,
-      battleId
-    );
+       WHERE b.id = ${battleId}::uuid
+    `);
 
     if (battles.length === 0 || battles[0].p1Score === null || battles[0].p2Score === null) {
       throw new BadRequestException('Batalha não pode ser finalizada');
@@ -344,47 +387,39 @@ export class BattleService {
     }
 
     // Atualiza os jogadores e a batalha em uma transaction
+    const winnerLeague = this.leagueService.getLeagueFromTrophies(winnerNewTrophies);
+    const loserLeague = this.leagueService.getLeagueFromTrophies(loserNewTrophies);
+    
     await Promise.all([
       // Atualiza vencedor
-      this.prisma.client.$executeRawUnsafe(
-        `UPDATE users SET 
-          trophies = $1, 
-          league = $2, 
+      this.prisma.$executeRaw(Prisma.sql`
+        UPDATE users SET 
+          trophies = ${winnerNewTrophies}, 
+          league = ${winnerLeague}, 
           "winStreak" = "winStreak" + 1,
           "battleWins" = "battleWins" + 1,
           "updatedAt" = NOW()
-        WHERE id = $3`,
-        winnerNewTrophies,
-        this.leagueService.getLeagueFromTrophies(winnerNewTrophies),
-        winnerId
-      ),
+        WHERE id = ${winnerId}::uuid
+      `),
       // Atualiza perdedor
-      this.prisma.client.$executeRawUnsafe(
-        `UPDATE users SET 
-          trophies = $1, 
-          league = $2, 
+      this.prisma.$executeRaw(Prisma.sql`
+        UPDATE users SET 
+          trophies = ${loserNewTrophies}, 
+          league = ${loserLeague}, 
           "winStreak" = 0,
           "battleLosses" = "battleLosses" + 1,
           "updatedAt" = NOW()
-        WHERE id = $3`,
-        loserNewTrophies,
-        this.leagueService.getLeagueFromTrophies(loserNewTrophies),
-        loserId
-      ),
+        WHERE id = ${loserId}::uuid
+      `),
     ]);
 
     // Atualiza batalha
-    await this.prisma.client.$executeRawUnsafe(
-      `UPDATE battles SET status = 'FINISHED', "winnerId" = $1, "finishedAt" = NOW(), "updatedAt" = NOW() WHERE id = $2`,
-      winnerId,
-      battleId
-    );
-
-    const winnerLeague = this.leagueService.getLeagueFromTrophies(winnerNewTrophies);
-    const loserLeague = this.leagueService.getLeagueFromTrophies(loserNewTrophies);
+    await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE battles SET status = 'FINISHED', "winnerId" = ${winnerId}::uuid, "finishedAt" = NOW(), "updatedAt" = NOW() WHERE id = ${battleId}::uuid
+    `);
 
     // Buscar winStreak atualizado do vencedor
-    const winnerUser = await this.prisma.client.user.findUnique({
+    const winnerUser = await this.prisma.user.findUnique({
       where: { id: winnerId },
       select: { winStreak: true },
     });
@@ -462,10 +497,9 @@ export class BattleService {
    * Cancela uma batalha (sair da fila)
    */
   async cancelBattle(userId: string, battleId: string): Promise<void> {
-    const battles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT * FROM battles WHERE id = $1`,
-      battleId
-    );
+    const battles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT * FROM battles WHERE id = ${battleId}::uuid
+    `);
 
     if (battles.length === 0) {
       throw new NotFoundException('Batalha não encontrada');
@@ -481,18 +515,17 @@ export class BattleService {
       throw new BadRequestException('Batalha já finalizada');
     }
 
-    await this.prisma.client.$executeRawUnsafe(
-      `UPDATE battles SET status = 'CANCELLED', "updatedAt" = NOW() WHERE id = $1`,
-      battleId
-    );
+    await this.prisma.$executeRaw(Prisma.sql`
+      UPDATE battles SET status = 'CANCELLED', "updatedAt" = NOW() WHERE id = ${battleId}::uuid
+    `);
   }
 
   /**
    * Busca batalhas do usuário
    */
   async getUserBattles(userId: string, limit: number = 20, offset: number = 0) {
-    const battles = await this.prisma.client.$queryRawUnsafe<any[]>(
-      `SELECT 
+    const battles = await this.prisma.$queryRaw<any[]>(Prisma.sql`
+      SELECT 
         b.*,
         json_build_object(
           'id', p1.id, 'username', p1.username, 'name', p1.name,
@@ -505,14 +538,11 @@ export class BattleService {
        FROM battles b
        INNER JOIN users p1 ON b."player1Id" = p1.id
        INNER JOIN users p2 ON b."player2Id" = p2.id
-       WHERE (b."player1Id" = $1 OR b."player2Id" = $1)
+       WHERE (b."player1Id" = ${userId}::uuid OR b."player2Id" = ${userId}::uuid)
          AND b.status = 'FINISHED'
        ORDER BY b."finishedAt" DESC
-       LIMIT $2 OFFSET $3`,
-      userId,
-      limit,
-      offset
-    );
+       LIMIT ${limit} OFFSET ${offset}
+    `);
 
     return battles.map(battle => this.formatBattleResponse(battle));
   }

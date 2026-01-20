@@ -14,7 +14,7 @@ export class RefreshTokenService {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + 30);
 
-    await this.prisma.client.refreshToken.create({
+    await this.prisma.refreshToken.create({
       data: {
         token,
         userId,
@@ -26,7 +26,7 @@ export class RefreshTokenService {
   }
 
   async validateRefreshToken(token: string): Promise<any> {
-    const refreshToken = await this.prisma.client.refreshToken.findUnique({
+    const refreshToken = await this.prisma.refreshToken.findUnique({
       where: { token },
       include: { user: true },
     });
@@ -45,19 +45,19 @@ export class RefreshTokenService {
   }
 
   async deleteRefreshToken(token: string): Promise<void> {
-    await this.prisma.client.refreshToken.deleteMany({
+    await this.prisma.refreshToken.deleteMany({
       where: { token },
     });
   }
 
   async deleteAllUserRefreshTokens(userId: string): Promise<void> {
-    await this.prisma.client.refreshToken.deleteMany({
+    await this.prisma.refreshToken.deleteMany({
       where: { userId },
     });
   }
 
   async deleteExpiredTokens(): Promise<void> {
-    await this.prisma.client.refreshToken.deleteMany({
+    await this.prisma.refreshToken.deleteMany({
       where: {
         expiresAt: {
           lt: new Date(),

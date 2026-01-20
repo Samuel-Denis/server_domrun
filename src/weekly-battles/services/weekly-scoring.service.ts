@@ -155,9 +155,8 @@ export class WeeklyScoringService {
    * Atualiza countedDay e countedWeek conforme regras
    */
   async reprocessParticipantScores(participantId: string): Promise<void> {
-    await this.prisma.client.$transaction(async (tx) => {
       // 1. Reprocessar máximo 2 corridas por dia
-      const runs = await tx.weeklyRun.findMany({
+      const runs = await this.prisma.weeklyRun.findMany({
         where: { participantId, isValid: true },
         orderBy: { submittedAt: 'asc' },
       });
@@ -172,7 +171,7 @@ export class WeeklyScoringService {
       }
 
       // Resetar countedDay
-      await tx.weeklyRun.updateMany({
+      await this.prisma.weeklyRun.updateMany({
         where: { participantId },
         data: { countedDay: false },
       });
@@ -183,7 +182,7 @@ export class WeeklyScoringService {
         const top2 = sorted.slice(0, 2);
         
         for (const run of top2) {
-          await tx.weeklyRun.update({
+          await this.prisma.weeklyRun.update({
             where: { id: run.id },
             data: { countedDay: true },
           });
@@ -191,36 +190,35 @@ export class WeeklyScoringService {
       }
 
       // 2. Reprocessar melhores 5 da semana (apenas countedDay=true)
-      await tx.weeklyRun.updateMany({
+      await this.prisma.weeklyRun.updateMany({
         where: { participantId },
         data: { countedWeek: false },
       });
 
-      const validRuns = await tx.weeklyRun.findMany({
+      const validRuns = await this.prisma.weeklyRun.findMany({
         where: { participantId, isValid: true, countedDay: true },
         orderBy: { finalScore: 'desc' },
       });
 
       const top5 = validRuns.slice(0, 5);
       for (const run of top5) {
-        await tx.weeklyRun.update({
+        await this.prisma.weeklyRun.update({
           where: { id: run.id },
           data: { countedWeek: true },
         });
       }
 
       // 3. Atualizar totalPoints e runsValidCount do participante
-      const countedRuns = await tx.weeklyRun.findMany({
+      const countedRuns = await this.prisma.weeklyRun.findMany({
         where: { participantId, isValid: true, countedWeek: true },
       });
 
       const totalPoints = countedRuns.reduce((sum, run) => sum + run.finalScore, 0);
       const runsValidCount = countedRuns.length;
 
-      await tx.weeklyRoomParticipant.update({
+      await this.prisma.weeklyRoomParticipant.update({
         where: { id: participantId },
         data: { totalPoints, runsValidCount },
       });
-    });
   }
 }

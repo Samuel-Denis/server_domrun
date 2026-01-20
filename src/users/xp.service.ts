@@ -39,7 +39,7 @@ export class XpService {
     leveledUp: boolean;
     previousLevel: number;
   }> {
-    const user = await this.prisma.client.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { level: true, xp: true },
     });
@@ -78,7 +78,7 @@ export class XpService {
     }
 
     // Atualizar no banco de dados
-    await this.prisma.client.user.update({
+    await this.prisma.user.update({
       where: { id: userId },
       data: {
         level: newLevel,
@@ -106,7 +106,7 @@ export class XpService {
     xpForNextLevel: number;
     xpProgress: number; // 0.0 a 1.0
   }> {
-    const user = await this.prisma.client.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { level: true, xp: true },
     });

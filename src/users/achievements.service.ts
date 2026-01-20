@@ -14,10 +14,12 @@ export class AchievementsService {
    * Retorna TODAS as conquistas do catálogo com o estado atual do usuário
    * Inclui conquistas LOCKED, IN_PROGRESS, UNLOCKED e CLAIMED
    * Retorna dados completos: Achievement (catálogo) + UserAchievement (estado do usuário)
+   * 
+   * @deprecated Para paginação, use getUserAchievementsCursorBased
    */
   async getUserAchievementsLight(userId: string) {
     // 1. Buscar todas as conquistas ativas do catálogo
-    const allAchievements = await this.prisma.client.achievement.findMany({
+    const allAchievements = await this.prisma.achievement.findMany({
       where: {
         isActive: true,
       },
@@ -28,7 +30,7 @@ export class AchievementsService {
     });
 
     // 2. Buscar estado do usuário para todas as conquistas (LEFT JOIN via código)
-    const userAchievements = await this.prisma.client.userAchievement.findMany({
+    const userAchievements = await this.prisma.userAchievement.findMany({
       where: { userId },
       include: {
         achievement: true, // Incluir dados do catálogo para garantir consistência
@@ -117,6 +119,140 @@ export class AchievementsService {
   }
 
   /**
+   * Busca conquistas do usuário com paginação cursor-based
+   * Retorna conquistas ordenadas por categoria e data de criação
+   * 
+   * @param userId - ID do usuário
+   * @param take - Número de itens por página (padrão: 20, máximo: 100)
+   * @param cursor - ID da última conquista da página anterior (opcional)
+   * @returns Objeto com achievements e nextCursor para próxima página
+   */
+  async getUserAchievementsCursorBased(userId: string, take: number = 20, cursor?: string) {
+    // Validar take
+    const validTake = Math.min(Math.max(1, take), 100);
+
+    // Construir where clause para conquistas ativas
+    const achievementWhere: any = {
+      isActive: true,
+    };
+
+    if (cursor) {
+      // Para cursor-based, precisamos buscar todas as conquistas e filtrar após
+      // (já que a ordenação é complexa: category + createdAt)
+      // Alternativa: usar apenas id como cursor simplificado
+      achievementWhere.id = {
+        gt: cursor, // Maior que cursor (para ordem asc por id)
+      };
+    }
+
+    // Buscar conquistas do catálogo (ordem por category asc, createdAt asc, id asc)
+    const allAchievements = await this.prisma.achievement.findMany({
+      where: achievementWhere,
+      orderBy: [
+        { category: 'asc' },
+        { createdAt: 'asc' },
+        { id: 'asc' }, // Ordem terciária para garantir consistência no cursor
+      ],
+      take: validTake + 1, // Buscar um a mais para saber se há próxima página
+    });
+
+    // Verificar se há próxima página
+    const hasNextPage = allAchievements.length > validTake;
+    const achievementsPage = hasNextPage ? allAchievements.slice(0, validTake) : allAchievements;
+
+    // Buscar estado do usuário para as conquistas da página atual
+    const achievementIds = achievementsPage.map((a) => a.id);
+    const userAchievements = await this.prisma.userAchievement.findMany({
+      where: {
+        userId,
+        achievementId: { in: achievementIds },
+      },
+      include: {
+        progressDetails: {
+          orderBy: { lastUpdated: 'desc' },
+          take: 1,
+        },
+      },
+    });
+
+    // Criar mapa de achievementId -> UserAchievement
+    const userAchievementMap = new Map(
+      userAchievements.map((ua) => [ua.achievementId, ua])
+    );
+
+    // Combinar catálogo com estado do usuário
+    const result = achievementsPage
+      .map((achievement) => {
+        const userAchievement = userAchievementMap.get(achievement.id);
+
+        // Se conquista é oculta e não foi desbloqueada, não incluir
+        if (achievement.isHidden && (!userAchievement || userAchievement.status === AchievementStatus.LOCKED)) {
+          return null;
+        }
+
+        // Se não tem UserAchievement, está LOCKED
+        if (!userAchievement) {
+          return {
+            id: achievement.id,
+            code: achievement.code,
+            title: achievement.title,
+            description: achievement.description,
+            category: achievement.category,
+            rarity: achievement.rarity,
+            iconAsset: achievement.iconAsset,
+            isHidden: achievement.isHidden,
+            criteriaJson: achievement.criteriaJson,
+            rewardJson: achievement.rewardJson,
+            seasonNumber: achievement.seasonNumber,
+            status: AchievementStatus.LOCKED,
+            progress: 0.0,
+            progressText: null,
+            currentValue: null,
+            targetValue: null,
+            unlockedAt: null,
+            claimedAt: null,
+          };
+        }
+
+        // Tem UserAchievement - retornar estado atual
+        const latestProgress = userAchievement.progressDetails[0];
+
+        return {
+          id: achievement.id,
+          code: achievement.code,
+          title: achievement.title,
+          description: achievement.description,
+          category: achievement.category,
+          rarity: achievement.rarity,
+          iconAsset: achievement.iconAsset,
+          isHidden: achievement.isHidden,
+          criteriaJson: achievement.criteriaJson,
+          rewardJson: achievement.rewardJson,
+          seasonNumber: achievement.seasonNumber,
+          status: userAchievement.status,
+          progress: userAchievement.progress,
+          progressText: userAchievement.progressText,
+          currentValue: userAchievement.currentValue ?? latestProgress?.currentValue ?? null,
+          targetValue: userAchievement.targetValue ?? latestProgress?.targetValue ?? null,
+          unlockedAt: userAchievement.unlockedAt,
+          claimedAt: userAchievement.claimedAt,
+          progressData: latestProgress?.progressData ?? null,
+        };
+      })
+      .filter((item) => item !== null);
+
+    // Próximo cursor = id da última conquista da página atual
+    const nextCursor = hasNextPage ? achievementsPage[achievementsPage.length - 1].id : null;
+
+    return {
+      achievements: result,
+      nextCursor,
+      hasNextPage,
+      count: result.length,
+    };
+  }
+
+  /**
    * Sincroniza progresso de conquistas do frontend
    * Sempre usa o maior progresso (evita regressão)
    */
@@ -154,7 +290,7 @@ export class AchievementsService {
       }
 
       // Buscar ou criar UserAchievement primeiro
-      const userAchievement = await this.prisma.client.userAchievement.upsert({
+      const userAchievement = await this.prisma.userAchievement.upsert({
         where: {
           userId_achievementId: {
             userId,
@@ -173,7 +309,7 @@ export class AchievementsService {
       });
 
       // Buscar progresso atual do banco
-      const existingProgress = await this.prisma.client.userAchievementProgress.findFirst({
+      const existingProgress = await this.prisma.userAchievementProgress.findFirst({
         where: {
           userAchievementId: userAchievement.id,
         },
@@ -186,7 +322,7 @@ export class AchievementsService {
         // Atualizar apenas se o novo progresso for maior (evita regressão)
         const currentProgress = existingProgress.currentValue || 0;
         if (normalizedProgress > currentProgress) {
-          await this.prisma.client.userAchievementProgress.create({
+          await this.prisma.userAchievementProgress.create({
             data: {
               userAchievementId: userAchievement.id,
               userId,
@@ -198,7 +334,7 @@ export class AchievementsService {
         }
       } else {
         // Inserir novo progresso
-        await this.prisma.client.userAchievementProgress.create({
+        await this.prisma.userAchievementProgress.create({
           data: {
             userAchievementId: userAchievement.id,
             userId,
@@ -236,7 +372,7 @@ export class AchievementsService {
     last_sync: string | null;
   }> {
     // Buscar progresso do usuário através de UserAchievement
-    const userAchievements = await this.prisma.client.userAchievement.findMany({
+    const userAchievements = await this.prisma.userAchievement.findMany({
       where: { userId },
       include: {
         progressDetails: {
@@ -247,7 +383,7 @@ export class AchievementsService {
     });
 
     // Buscar conquistas completas
-    const completedRecords = await this.prisma.client.userAchievement.findMany({
+    const completedRecords = await this.prisma.userAchievement.findMany({
       where: {
         userId,
         status: AchievementStatus.CLAIMED,
@@ -305,7 +441,7 @@ export class AchievementsService {
     achievementId: string,
   ): Promise<boolean> {
     // Verificar se já está completa na tabela user_achievements
-    const existing = await this.prisma.client.userAchievement.findUnique({
+    const existing = await this.prisma.userAchievement.findUnique({
       where: {
         userId_achievementId: {
           userId,
@@ -319,7 +455,7 @@ export class AchievementsService {
     }
 
     // Atualizar ou criar registro na tabela user_achievements
-    await this.prisma.client.userAchievement.upsert({
+    await this.prisma.userAchievement.upsert({
       where: {
         userId_achievementId: {
           userId,
@@ -343,7 +479,7 @@ export class AchievementsService {
     });
 
     // Buscar recompensa da conquista e adicionar XP ao usuário
-    const achievement = await this.prisma.client.achievement.findUnique({
+    const achievement = await this.prisma.achievement.findUnique({
       where: { id: achievementId },
       select: { rewardJson: true },
     });
@@ -378,7 +514,7 @@ export class AchievementsService {
   }): Promise<void> {
     try {
       // Buscar todas as conquistas ativas relacionadas a corridas
-      const runAchievements = await this.prisma.client.achievement.findMany({
+      const runAchievements = await this.prisma.achievement.findMany({
         where: {
           category: 'RUN',
           isActive: true,
@@ -468,7 +604,7 @@ export class AchievementsService {
     }
   ): Promise<void> {
     try {
-      const territoryAchievements = await this.prisma.client.achievement.findMany({
+      const territoryAchievements = await this.prisma.achievement.findMany({
         where: {
           category: 'TERRITORY',
           isActive: true,
@@ -525,14 +661,14 @@ export class AchievementsService {
     }
   ): Promise<void> {
     try {
-      const battleAchievements = await this.prisma.client.achievement.findMany({
+      const battleAchievements = await this.prisma.achievement.findMany({
         where: {
           category: 'SOCIAL',
           isActive: true,
         },
       });
 
-      const user = await this.prisma.client.user.findUnique({
+      const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: {
           battleWins: true,
@@ -583,14 +719,14 @@ export class AchievementsService {
    */
   async checkMilestoneAchievements(userId: string): Promise<void> {
     try {
-      const milestoneAchievements = await this.prisma.client.achievement.findMany({
+      const milestoneAchievements = await this.prisma.achievement.findMany({
         where: {
           category: 'MILESTONE',
           isActive: true,
         },
       });
 
-      const user = await this.prisma.client.user.findUnique({
+      const user = await this.prisma.user.findUnique({
         where: { id: userId },
         select: {
           level: true,
@@ -637,7 +773,7 @@ export class AchievementsService {
     values?: { currentValue: number | null; targetValue: number | null }
   ): Promise<void> {
     // Buscar ou criar UserAchievement
-    const userAchievement = await this.prisma.client.userAchievement.upsert({
+    const userAchievement = await this.prisma.userAchievement.upsert({
       where: {
         userId_achievementId: { userId, achievementId },
       },
@@ -671,7 +807,7 @@ export class AchievementsService {
     }
 
     // Registrar progresso detalhado
-    await this.prisma.client.userAchievementProgress.create({
+    await this.prisma.userAchievementProgress.create({
       data: {
         userAchievementId: userAchievement.id,
         userId,
@@ -686,7 +822,7 @@ export class AchievementsService {
    * Busca estatísticas de corridas do usuário
    */
   private async getUserRunStats(userId: string) {
-    const runs = await this.prisma.client.run.findMany({
+    const runs = await this.prisma.run.findMany({
       where: { userId },
       select: {
         distance: true,
@@ -736,7 +872,7 @@ export class AchievementsService {
    * Busca estatísticas de territórios do usuário
    */
   private async getUserTerritoryStats(userId: string) {
-    const territories = await this.prisma.client.territory.findMany({
+    const territories = await this.prisma.territory.findMany({
       where: { userId },
       select: {
         area: true,
