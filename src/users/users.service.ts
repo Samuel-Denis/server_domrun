@@ -1,4 +1,4 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -12,6 +12,8 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     private prisma: PrismaService,
     private uploadService: UploadService,
@@ -95,7 +97,7 @@ export class UsersService {
   }
 
   async getUserByIdComplete(userId: string) {
-      console.log('chegou aqui 2'+ userId);
+    this.logger.debug(`Carregando perfil completo para userId=${userId}`);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: {

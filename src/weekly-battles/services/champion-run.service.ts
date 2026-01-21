@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WeeklyScoringService } from './weekly-scoring.service';
 import { WeeklyAntiCheatService } from './weekly-anti-cheat.service';
@@ -10,6 +10,8 @@ import { LeagueService } from './league.service';
  */
 @Injectable()
 export class ChampionRunService {
+  private readonly logger = new Logger(ChampionRunService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly scoringService: WeeklyScoringService,
@@ -149,12 +151,12 @@ export class ChampionRunService {
     const previousWeekKey = generateWeekKey(previousWeekStart);
     const { seasonNumber, weekNumber } = parseWeekKey(previousWeekKey);
 
-    console.log(`🏆 Processando fechamento semanal da Liga Imortal para ${previousWeekKey}...`);
+    this.logger.log(`🏆 Processando fechamento semanal da Liga Imortal para ${previousWeekKey}...`);
 
     // Buscar todos os usuários da Liga Imortal
     const immortalLeague = await this.leagueService.findByCode('IMMORTAL');
     if (!immortalLeague) {
-      console.log('⚠️  Liga Imortal não encontrada');
+      this.logger.warn('⚠️  Liga Imortal não encontrada');
       return;
     }
 
@@ -162,7 +164,7 @@ export class ChampionRunService {
       where: { leagueId: immortalLeague.id },
     });
 
-    console.log(`📋 Encontrados ${users.length} usuários na Liga Imortal`);
+    this.logger.log(`📋 Encontrados ${users.length} usuários na Liga Imortal`);
 
     const MIN_VALID_RUNS = 3;
     const PENALTY_TROPHIES = 50; // Penalidade fixa por inatividade
@@ -180,7 +182,7 @@ export class ChampionRunService {
       );
     }
 
-    console.log(`✅ Fechamento semanal da Liga Imortal concluído`);
+    this.logger.log('✅ Fechamento semanal da Liga Imortal concluído');
   }
 
   /**

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 /**
@@ -11,6 +11,8 @@ import { Prisma } from '@prisma/client';
  */
 @Injectable()
 export class TerritoryProcessingService {
+  private readonly logger = new Logger(TerritoryProcessingService.name);
+
   /**
    * Identifica territórios do mesmo usuário que devem ser fundidos
    * 
@@ -99,7 +101,7 @@ export class TerritoryProcessingService {
           unionGeometry = unionResult[0].union_wkt;
         }
       } catch (unionError: any) {
-        console.warn(`⚠️ Erro ao unir território ${oldTerritory.id}: ${unionError.message}`);
+        this.logger.warn(`⚠️ Erro ao unir território ${oldTerritory.id}: ${unionError.message}`);
       }
     }
 
@@ -140,7 +142,7 @@ export class TerritoryProcessingService {
         try {
           await tx.territory.delete({ where: { id: oldTerritory.id } });
         } catch (deleteError: any) {
-          console.warn(`⚠️ Erro ao deletar território ${oldTerritory.id}: ${deleteError.message}`);
+          this.logger.warn(`⚠️ Erro ao deletar território ${oldTerritory.id}: ${deleteError.message}`);
         }
       }
 

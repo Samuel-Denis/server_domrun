@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from '../users/users.service';
 import { RefreshTokenService } from './refresh-token.service';
@@ -6,6 +6,8 @@ import * as bcrypt from 'bcrypt';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     private usersService: UsersService,
     private jwtService: JwtService,
@@ -24,27 +26,18 @@ export class AuthService {
   async login(user: any) {
     const payload = { username: user.username, sub: user.id };
 
-    console.log('chegou aqui');
-
     // Atualizar último login
     await this.usersService.updateLastLogin(user.id);
-
-    console.log(user);
 
     // Buscar todos os dados do usuário do banco
     const fullUser = await this.usersService.getUserByIdComplete(user.id);
 
-    console.log(fullUser);
-
     // Gerar access token (expira em 7 dias)
     const access_token = this.jwtService.sign(payload);
 
-    console.log(access_token);
-
     // Gerar refresh token (armazenado no banco, expira em 30 dias)
     const refresh_token = await this.refreshTokenService.generateRefreshToken(user.id);
-
-    console.log(refresh_token);
+    this.logger.debug(`Login concluido para userId=${user.id}`);
 
     return {
       access_token,

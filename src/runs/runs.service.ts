@@ -86,20 +86,6 @@ export class RunsService {
                 .checkMilestoneAchievements(userId)
                 .catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
-            // Salvar imagem do mapa após criar a corrida
-            /*  if (mapImage) {
-                  try {
-                      mapImageUrl = await this.uploadService.saveRunMapImage(mapImage, run.id);
-                      console.log(`📸 Imagem do mapa salva: ${mapImageUrl}`);
-  
-                      // Atualizar a corrida com a URL da imagem
-                      await this.runsRepository.updateRunMapImage(run.id, mapImageUrl);
-                  } catch (imageError: any) {
-                      console.warn('⚠️ Erro ao salvar imagem do mapa:', imageError.message);
-                      // Não falhar a criação da corrida se a imagem falhar
-                  }
-              }*/
-
             return {
                 ...run,
             };
@@ -124,8 +110,6 @@ export class RunsService {
             this.logger.log(`   - Tipo: LineString (${dto.boundary.length} pontos)`);
             this.logger.log(`   - Usuário: ${dto.userName}`);
             this.logger.log(`   - Área: ${dto.areaName}`);
-            //  console.log(`   - Imagem do mapa: ${mapImage ? 'Sim' : 'Não'}`);
-
             // Aplicar Map Matching para corrigir erros de GPS e alinhar com as ruas
             let correctedBoundary = dto.boundary;
 
@@ -163,23 +147,6 @@ export class RunsService {
                     setTimeout(() => reject(new BadRequestException('Timeout ao processar território')), 60000)
                 )
             ]) as any;
-
-            // Salvar imagem do mapa se foi fornecida
-            // let mapImageUrl: string | null = null;
-            /*    if (mapImage && territoryResult.runId) {
-                    try {
-                        mapImageUrl = await this.uploadService.saveRunMapImage(mapImage, territoryResult.runId);
-                        console.log(`📸 Imagem do mapa salva: ${mapImageUrl}`);
-    
-                        // Atualizar a corrida com a URL da imagem
-                        if (mapImageUrl) {
-                            await this.runsRepository.updateRunMapImage(territoryResult.runId, mapImageUrl);
-                        }
-                    } catch (imageError: any) {
-                        console.warn('⚠️ Erro ao salvar imagem do mapa:', imageError.message);
-                        // Não falhar a criação da corrida se a imagem falhar
-                    }
-                }*/
 
             // Adicionar XP por criar território (50 XP base)
             let xpResult: Awaited<ReturnType<typeof this.xpService.addXp>> | null = null;
