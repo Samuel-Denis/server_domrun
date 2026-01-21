@@ -10,7 +10,6 @@ import { LocalAuthGuard } from './guards/local-auth.guard';
 export class AuthController {
   constructor(private authService: AuthService) {}
 
-  @UseGuards(ThrottlerGuard)
   @Post('register')
   async register(@Body() registerDto: RegisterDto) {
     return this.authService.register(registerDto);
@@ -22,13 +21,11 @@ export class AuthController {
     return this.authService.login(req.user);
   }
 
-  @UseGuards(ThrottlerGuard)
   @Post('refresh')
   async refresh(@Body() refreshTokenDto: RefreshTokenDto) {
     return this.authService.refresh(refreshTokenDto.refresh_token);
   }
 
-  @UseGuards(ThrottlerGuard)
   @Post('logout')
   async logout(@Body() refreshTokenDto: RefreshTokenDto) {
     return this.authService.logout(refreshTokenDto.refresh_token);
