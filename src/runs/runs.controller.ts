@@ -77,31 +77,6 @@ export class RunsController {
             delete dataToParse.userId;
         }
 
-        // Converter formato GeoJSON para formato esperado se necessário
-        /*    if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
-                // É formato GeoJSON: { type: "LineString", coordinates: [[lng, lat], ...] }
-                if (dataToParse.boundary.type === 'LineString' && Array.isArray(dataToParse.boundary.coordinates)) {
-                    console.log('🔄 Convertendo GeoJSON para formato esperado...');
-                    const now = new Date();
-                    dataToParse.boundary = dataToParse.boundary.coordinates.map((coord: number[], index: number) => {
-                        const [longitude, latitude] = coord;
-                        // Criar timestamp progressivo se não tiver capturedAt
-                        const timestamp = dataToParse.capturedAt
-                            ? new Date(new Date(dataToParse.capturedAt).getTime() + (index * 1000)).toISOString()
-                            : new Date(now.getTime() + (index * 1000)).toISOString();
-    
-                        return {
-                            latitude,
-                            longitude,
-                            timestamp,
-                        };
-                    });
-                    console.log(`✅ Convertido: ${dataToParse.boundary.length} pontos`);
-                } else {
-                    throw new BadRequestException('Formato GeoJSON inválido: boundary deve ter type="LineString" e coordinates array');
-                }
-            }*/
-
         // Converter formato GeoJSON -> formato esperado (BoundaryPoint[]) se necessário
         if (dataToParse.boundary && typeof dataToParse.boundary === 'object' && !Array.isArray(dataToParse.boundary)) {
             try {

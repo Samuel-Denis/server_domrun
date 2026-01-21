@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { RunsRepository } from '../runs.repository';
@@ -18,6 +18,8 @@ import { TerritoryProcessingService } from './territory-processing.service';
  */
 @Injectable()
 export class TerritoryService {
+  private readonly logger = new Logger(TerritoryService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly runsRepository: RunsRepository,
@@ -52,20 +54,20 @@ export class TerritoryService {
     // Transação atômica (60s timeout)
     return this.prisma.$transaction(
       async (tx) => {
-        console.log('🛠️  Processando território...');
-        console.log(`   📍 ${data.boundary.length} pontos recebidos (LineString)`);
+        this.logger.debug('🛠️  Processando território');
+        this.logger.debug(`   📍 ${data.boundary.length} pontos recebidos (LineString)`);
 
         // ===== PASSO 1: CONVERTER BOUNDARY PARA WKT =====
         const lineStringWKT = this.territoryCalculationService.createLineStringWKT(data.boundary);
-        console.log('   ✅ LineString WKT criada');
+        this.logger.debug('   ✅ LineString WKT criada');
 
         // ===== PASSO 2: DETECTAR CIRCUITO FECHADO =====
         const isClosedLoop = this.territoryCalculationService.isClosedLoop(data.boundary);
         const distanceBetweenPoints = this.territoryCalculationService.getDistanceBetweenEndpoints(
           data.boundary,
         );
-        console.log(`   📏 Distância entre primeiro e último ponto: ${distanceBetweenPoints.toFixed(2)}m`);
-        console.log(`   🔄 Circuito ${isClosedLoop ? 'FECHADO' : 'ABERTO'} (limite: 30m)`);
+        this.logger.debug(`   📏 Distância entre primeiro e último ponto: ${distanceBetweenPoints.toFixed(2)}m`);
+        this.logger.debug(`   🔄 Circuito ${isClosedLoop ? 'FECHADO' : 'ABERTO'} (limite: 30m)`);
 
         // ===== PASSO 3: PREPARAR DATAS =====
         const capturedAt = data.capturedAt ? new Date(data.capturedAt) : new Date();
@@ -85,9 +87,9 @@ export class TerritoryService {
         let calculatedArea = territoryResult.area;
         let currentTerritoryWKT: string;
 
-        console.log('✅ Território salvo com sucesso!');
-        console.log(`   - ID: ${territoryId}`);
-        console.log(`   - Área calculada: ${calculatedArea.toFixed(2)} m²`);
+        this.logger.debug('✅ Território salvo com sucesso');
+        this.logger.debug(`   - ID: ${territoryId}`);
+        this.logger.debug(`   - Área calculada: ${calculatedArea.toFixed(2)} m²`);
 
         // ===== PASSO 5: OBTER GEOMETRIA WKT PARA PROCESSAMENTO =====
         currentTerritoryWKT = await this.runsRepository.getTerritoryWKT(territoryId, tx);
@@ -102,7 +104,7 @@ export class TerritoryService {
           );
 
           if (territoriesToMerge.length > 0) {
-            console.log(`   🔗 Encontrados ${territoriesToMerge.length} território(s) do mesmo usuário para fusão`);
+            this.logger.debug(`   🔗 Encontrados ${territoriesToMerge.length} território(s) do mesmo usuário para fusão`);
 
             const mergeResult = await this.territoryProcessingService.mergeTerritories(
               tx,
@@ -114,11 +116,11 @@ export class TerritoryService {
             if (mergeResult) {
               currentTerritoryWKT = mergeResult.finalWKT;
               calculatedArea = mergeResult.area;
-              console.log(`   ✅ ${territoriesToMerge.length} território(s) fundidos com sucesso`);
+              this.logger.debug(`   ✅ ${territoriesToMerge.length} território(s) fundidos com sucesso`);
             }
           }
         } catch (mergeError: any) {
-          console.warn('⚠️ Erro na fusão de territórios:', mergeError.message);
+          this.logger.warn(`⚠️ Erro na fusão de territórios: ${mergeError.message}`);
         }
 
         // ===== PASSO 7: RECORTAR TERRITÓRIOS DE OUTROS USUÁRIOS =====
@@ -131,7 +133,7 @@ export class TerritoryService {
           );
 
           if (enemyTerritories.length > 0) {
-            console.log(`   ⚔️ Recortando ${enemyTerritories.length} território(s) de outros usuários...`);
+            this.logger.debug(`   ⚔️ Recortando ${enemyTerritories.length} território(s) de outros usuários...`);
 
             for (const enemyTerritory of enemyTerritories) {
               try {
@@ -142,31 +144,31 @@ export class TerritoryService {
                 );
 
                 if (fragmentsCount > 1) {
-                  console.log(
+                  this.logger.debug(
                     `   ✂️  Território ${enemyTerritory.id} dividido em ${fragmentsCount} fragmentos`,
                   );
                 }
               } catch (cutError: any) {
-                console.warn(`⚠️ Erro ao recortar território ${enemyTerritory.id}:`, cutError.message);
+                this.logger.warn(`⚠️ Erro ao recortar território ${enemyTerritory.id}: ${cutError.message}`);
               }
             }
 
-            console.log(`   ✅ Área roubada de ${enemyTerritories.length} território(s) inimigo(s)`);
+            this.logger.debug(`   ✅ Área roubada de ${enemyTerritories.length} território(s) inimigo(s)`);
           } else {
-            console.log('   ✅ Nenhum território inimigo para recortar.');
+            this.logger.debug('   ✅ Nenhum território inimigo para recortar.');
           }
         } catch (cutError: any) {
-          console.warn('⚠️ Erro no recorte de territórios:', cutError.message);
+          this.logger.warn(`⚠️ Erro no recorte de territórios: ${cutError.message}`);
         }
 
         // ===== PASSO 8: LIMPEZA DE FRAGMENTOS =====
         try {
           const deletedCount = await this.territoryProcessingService.cleanupFragments(tx);
           if (deletedCount > 0) {
-            console.log(`   🧹 ${deletedCount} fragmento(s) pequeno(s) removido(s)`);
+            this.logger.debug(`   🧹 ${deletedCount} fragmento(s) pequeno(s) removido(s)`);
           }
         } catch (cleanupError: any) {
-          console.warn('⚠️ Erro na limpeza de fragmentos:', cleanupError.message);
+          this.logger.warn(`⚠️ Erro na limpeza de fragmentos: ${cleanupError.message}`);
         }
 
         // ===== PASSO 9: CALCULAR DADOS DA CORRIDA =====

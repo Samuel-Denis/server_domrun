@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeagueService } from './league.service';
 import { WeeklyScoringService } from './weekly-scoring.service';
@@ -9,6 +9,8 @@ import { generateWeekKey, getCurrentWeekRange, parseWeekKey } from '../utils/wee
  */
 @Injectable()
 export class WeeklyClosureService {
+  private readonly logger = new Logger(WeeklyClosureService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly leagueService: LeagueService,
@@ -33,7 +35,7 @@ export class WeeklyClosureService {
     const previousWeekKey = generateWeekKey(previousWeekStart);
     const { seasonNumber, weekNumber } = parseWeekKey(previousWeekKey);
 
-    console.log(`🔒 Fechando semana ${previousWeekKey}...`);
+    this.logger.log(`🔒 Fechando semana ${previousWeekKey}...`);
 
     // Buscar todas as salas da semana anterior que ainda estão abertas
     const rooms = await this.prisma.weeklyRoom.findMany({
@@ -46,13 +48,13 @@ export class WeeklyClosureService {
       },
     });
 
-    console.log(`📋 Encontradas ${rooms.length} salas para fechar`);
+    this.logger.log(`📋 Encontradas ${rooms.length} salas para fechar`);
 
     for (const room of rooms) {
       await this.processRoomClosure(room.id, room.league);
     }
 
-    console.log(`✅ Fechamento da semana ${previousWeekKey} concluído`);
+    this.logger.log(`✅ Fechamento da semana ${previousWeekKey} concluído`);
   }
 
   /**
@@ -212,7 +214,7 @@ export class WeeklyClosureService {
         data: { status: 'FINISHED' },
       });
 
-      console.log(`✅ Sala ${roomId} processada: ${updatedParticipants.length} participantes`);
+      this.logger.log(`✅ Sala ${roomId} processada: ${updatedParticipants.length} participantes`);
     });
   }
 

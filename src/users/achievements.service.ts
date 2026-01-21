@@ -1,10 +1,12 @@
-import { Injectable, BadRequestException, ForbiddenException } from '@nestjs/common';
+import { Injectable, BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { XpService } from './xp.service';
 import { AchievementStatus } from '@prisma/client';
 
 @Injectable()
 export class AchievementsService {
+  private readonly logger = new Logger(AchievementsService.name);
+
   constructor(
     private prisma: PrismaService,
     private xpService: XpService,
@@ -285,7 +287,7 @@ export class AchievementsService {
       const normalizedProgress = Math.max(0.0, Math.min(1.0, parseFloat(progressValue.toString())));
 
       if (isNaN(normalizedProgress)) {
-        console.warn(`Progresso inválido para ${achievementId}: ${progressValue}`);
+        this.logger.warn(`Progresso inválido para ${achievementId}: ${progressValue}`);
         continue;
       }
 
@@ -491,9 +493,9 @@ export class AchievementsService {
       if (xpReward > 0) {
         try {
           await this.xpService.addXp(userId, xpReward);
-          console.log(`✨ ${userId} ganhou ${xpReward} XP por completar ${achievementId}`);
+          this.logger.debug(`✨ ${userId} ganhou ${xpReward} XP por completar ${achievementId}`);
         } catch (error: any) {
-          console.warn(`⚠️ Erro ao adicionar XP por conquista: ${error.message}`);
+          this.logger.warn(`⚠️ Erro ao adicionar XP por conquista: ${error.message}`);
         }
       }
     }
@@ -587,7 +589,7 @@ export class AchievementsService {
         }
       }
     } catch (error: any) {
-      console.error('❌ Erro ao verificar conquistas de corrida:', error.message);
+      this.logger.error('❌ Erro ao verificar conquistas de corrida', error?.stack || error);
       // Não lançar erro para não quebrar o fluxo principal
     }
   }
@@ -644,7 +646,7 @@ export class AchievementsService {
         }
       }
     } catch (error: any) {
-      console.error('❌ Erro ao verificar conquistas de território:', error.message);
+      this.logger.error('❌ Erro ao verificar conquistas de território', error?.stack || error);
     }
   }
 
@@ -710,7 +712,7 @@ export class AchievementsService {
         }
       }
     } catch (error: any) {
-      console.error('❌ Erro ao verificar conquistas de batalha:', error.message);
+      this.logger.error('❌ Erro ao verificar conquistas de batalha', error?.stack || error);
     }
   }
 
@@ -759,7 +761,7 @@ export class AchievementsService {
         }
       }
     } catch (error: any) {
-      console.error('❌ Erro ao verificar conquistas de marco:', error.message);
+      this.logger.error('❌ Erro ao verificar conquistas de marco', error?.stack || error);
     }
   }
 

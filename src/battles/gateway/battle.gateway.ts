@@ -8,7 +8,7 @@ import {
   ConnectedSocket,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { BattleService } from '../services/battle.service';
 // import { JoinQueueDto } from '../dto/join-queue.dto'; // Não usado diretamente
@@ -25,6 +25,7 @@ export class BattleGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server: Server;
 
   private connectedUsers = new Map<string, string>(); // socketId -> userId
+  private readonly logger = new Logger(BattleGateway.name);
 
   constructor(
     private readonly battleService: BattleService,
@@ -58,13 +59,13 @@ export class BattleGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     this.connectedUsers.set(client.id, userId);
-    console.log(`🔌 Cliente conectado: ${client.id} (userId: ${userId})`);
+    this.logger.debug(`🔌 Cliente conectado: ${client.id} (userId: ${userId})`);
   }
 
   async handleDisconnect(@ConnectedSocket() client: Socket) {
     const userId = this.connectedUsers.get(client.id);
     this.connectedUsers.delete(client.id);
-    console.log(`🔌 Cliente desconectado: ${client.id} (userId: ${userId})`);
+    this.logger.debug(`🔌 Cliente desconectado: ${client.id} (userId: ${userId})`);
   }
 
   /**

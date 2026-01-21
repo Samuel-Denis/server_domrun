@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { BattleScoreService } from './battle-score.service';
@@ -14,6 +14,7 @@ import { AchievementsService } from '../../users/achievements.service';
 @Injectable()
 export class BattleService {
   private readonly MATCHMAKING_TROPHY_RANGE = 200; // ±200 troféus para matchmaking
+  private readonly logger = new Logger(BattleService.name);
 
   constructor(
     private readonly prisma: PrismaService,
@@ -429,16 +430,16 @@ export class BattleService {
       won: true,
       winStreak: winnerUser?.winStreak || 0,
       opponentId: loserId,
-    }).catch(err => console.error('Erro ao verificar conquistas do vencedor:', err));
+    }).catch(err => this.logger.error('Erro ao verificar conquistas do vencedor', err?.stack || err));
 
     this.achievementsService.checkBattleAchievements(loserId, {
       won: false,
       opponentId: winnerId,
-    }).catch(err => console.error('Erro ao verificar conquistas do perdedor:', err));
+    }).catch(err => this.logger.error('Erro ao verificar conquistas do perdedor', err?.stack || err));
 
     // Verificar conquistas de marcos (troféus podem ter mudado)
-    this.achievementsService.checkMilestoneAchievements(winnerId).catch(err => console.error('Erro ao verificar conquistas:', err));
-    this.achievementsService.checkMilestoneAchievements(loserId).catch(err => console.error('Erro ao verificar conquistas:', err));
+    this.achievementsService.checkMilestoneAchievements(winnerId).catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
+    this.achievementsService.checkMilestoneAchievements(loserId).catch(err => this.logger.error('Erro ao verificar conquistas', err?.stack || err));
 
     return {
       battleId: battle.id,

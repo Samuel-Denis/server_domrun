@@ -17,8 +17,12 @@ import { LocalStrategy } from './strategies/local.strategy';
     PrismaModule,
     PassportModule,
     ThrottlerModule.forRoot({
-      ttl: 60,
-      limit: 10,
+      throttlers: [
+        {
+          ttl: 60,
+          limit: 5,
+        },
+      ],
     }),
     // JwtModule configurado via ConfigService (sem fallbacks hardcoded)
     JwtModule.registerAsync({
@@ -46,4 +50,4 @@ import { LocalStrategy } from './strategies/local.strategy';
   ],
   exports: [AuthService, RefreshTokenService],
 })
-export class AuthModule {}
+export class AuthModule { }
