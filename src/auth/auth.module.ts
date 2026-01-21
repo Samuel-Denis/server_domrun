@@ -50,4 +50,4 @@ import { LocalStrategy } from './strategies/local.strategy';
   ],
   exports: [AuthService, RefreshTokenService],
 })
-export class AuthModule {}
+export class AuthModule { }
