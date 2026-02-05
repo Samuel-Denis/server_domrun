@@ -192,6 +192,16 @@ export class UsersService {
             createdAt: 'desc',
           },
         },
+        weeklyRoomParticipants: {
+          select: {
+            id: true,
+            totalPoints: true,
+            runsValidCount: true,
+            position: true,
+            promoted: true,
+            demoted: true,
+          },
+        }
         // territories será buscado separadamente com SQL raw para incluir boundary
         // Não incluir password e outros dados sensíveis
       },
@@ -337,7 +347,7 @@ export class UsersService {
 
     // Contagem de conquistas (sempre retornar para estatísticas)
     const achievementsCount = await this.prisma.userAchievement.count({
-      where: { 
+      where: {
         userId,
         status: AchievementStatus.CLAIMED,
       },
@@ -438,6 +448,18 @@ export class UsersService {
       updateData.biography = updateProfileDto.biography || null;
     }
 
+    if (updateProfileDto.weightKg !== undefined) {
+      updateData.weightKg = updateProfileDto.weightKg;
+    }
+
+    if (updateProfileDto.heightCm !== undefined) {
+      updateData.heightCm = updateProfileDto.heightCm;
+    }
+
+    if (updateProfileDto.age !== undefined) {
+      updateData.age = updateProfileDto.age;
+    }
+
     // Se a senha foi fornecida, fazer hash
     if (updateProfileDto.password) {
       updateData.password = await bcrypt.hash(updateProfileDto.password, 10);
@@ -471,6 +493,9 @@ export class UsersService {
         createdAt: true,
         updatedAt: true,
         lastLogin: true,
+        age: true,
+        weightKg: true,
+        heightCm: true,
       },
     });
 
@@ -481,6 +506,17 @@ export class UsersService {
     await this.prisma.user.update({
       where: { id: userId },
       data: { lastLogin: new Date() },
+    });
+  }
+
+  async getUserHealthProfile(userId: string) {
+    return this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        weightKg: true,
+        heightCm: true,
+        age: true,
+      },
     });
   }
 
@@ -570,11 +606,11 @@ export class UsersService {
     // Construir where clause
     const where = cursor
       ? {
-          userId,
-          id: {
-            lt: cursor, // Menor que cursor (para ordem desc)
-          },
-        }
+        userId,
+        id: {
+          lt: cursor, // Menor que cursor (para ordem desc)
+        },
+      }
       : { userId };
 
     // Buscar runs (ordem por createdAt desc, usar id como cursor)
@@ -707,7 +743,7 @@ export class UsersService {
   }
 
   async getTrophyRanking(limit: number = 10) {
-      const users = await this.prisma.user.findMany({
+    const users = await this.prisma.user.findMany({
       take: limit,
       orderBy: {
         trophies: 'desc',

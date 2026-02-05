@@ -87,6 +87,37 @@ export class RunsCalculationService {
   }
 
   /**
+   * Calcula calorias estimadas usando MET (baseado em velocidade média).
+   * Requer dados do usuário (peso/altura/idade). Se faltar, retorna undefined.
+   */
+  calculateCalories(
+    distanceMeters: number,
+    durationSeconds: number,
+    userProfile?: { weightKg?: number | null; heightCm?: number | null; age?: number | null },
+  ): number | undefined {
+    if (!userProfile?.weightKg || !userProfile?.heightCm || !userProfile?.age) {
+      return undefined;
+    }
+    if (!distanceMeters || !durationSeconds || distanceMeters <= 0 || durationSeconds <= 0) {
+      return undefined;
+    }
+
+    const hours = durationSeconds / 3600;
+    const speedKmh = (distanceMeters / 1000) / hours;
+    const met = this.getRunningMet(speedKmh);
+    const calories = met * userProfile.weightKg * hours;
+    return Math.round(calories);
+  }
+
+  private getRunningMet(speedKmh: number): number {
+    if (speedKmh < 8) return 8.3;
+    if (speedKmh < 9.7) return 9.8;
+    if (speedKmh < 11.3) return 11.0;
+    if (speedKmh < 12.9) return 11.8;
+    return 12.8;
+  }
+
+  /**
    * Calcula todos os dados de uma corrida simples
    * 
    * Calcula distância, duração e ritmo médio baseado nos pontos GPS fornecidos.

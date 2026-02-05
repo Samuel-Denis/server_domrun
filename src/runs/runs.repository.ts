@@ -298,6 +298,7 @@ export class RunsRepository {
       distance: number;
       duration: number;
       averagePace: number;
+      calories?: number;
     },
   ) {
       return this.prisma.$transaction(async (tx) => {
@@ -329,6 +330,7 @@ export class RunsRepository {
           distance: runData.distance,
           duration: runData.duration,
           averagePace: runData.averagePace,
+          calories: runData.calories,
           territoryId,
         },
       });

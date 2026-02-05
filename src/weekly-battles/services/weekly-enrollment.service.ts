@@ -1,7 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { LeagueService } from './league.service';
-import { getEnrollmentPeriod, isEnrollmentPeriod, getNextWeekKey, parseWeekKey } from '../utils/week-helper';
+import { getNextWeekKey, parseWeekKey } from '../utils/week-helper';
 
 /**
  * Serviço para gerenciar inscrições semanais
@@ -18,15 +18,7 @@ export class WeeklyEnrollmentService {
    * Disponível apenas durante segunda-feira (00:00 - 23:59)
    */
   async enrollUser(userId: string): Promise<any> {
-    // 1. Verificar se estamos no período de inscrição
-    if (!isEnrollmentPeriod()) {
-      const enrollmentPeriod = getEnrollmentPeriod();
-      throw new BadRequestException(
-        `Período de inscrição é apenas na segunda-feira (${enrollmentPeriod.startDate.toLocaleDateString('pt-BR')} 00:00 - 23:59)`
-      );
-    }
-
-    // 2. Buscar usuário e verificar se tem liga (não pode ser Imortal)
+    // 1. Buscar usuário e verificar se tem liga (não pode ser Imortal)
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: { league: true },
@@ -44,11 +36,11 @@ export class WeeklyEnrollmentService {
       throw new BadRequestException('Usuários da Liga Imortal não participam de salas semanais');
     }
 
-    // 3. Obter weekKey da próxima semana
+    // 2. Obter weekKey da próxima semana
     const nextWeekKey = getNextWeekKey();
     const { seasonNumber, weekNumber } = parseWeekKey(nextWeekKey);
 
-    // 4. Verificar se já está inscrito
+    // 3. Verificar se já está inscrito
     const existingEnrollment = await this.prisma.weeklyEnrollment.findUnique({
       where: {
         userId_weekKey: {
@@ -62,7 +54,7 @@ export class WeeklyEnrollmentService {
       throw new BadRequestException('Você já está inscrito para esta semana');
     }
 
-    // 5. Criar inscrição
+    // 4. Criar inscrição
     const enrollment = await this.prisma.weeklyEnrollment.create({
       data: {
         userId,
@@ -89,11 +81,6 @@ export class WeeklyEnrollmentService {
    */
   async unenrollUser(userId: string, weekKey?: string): Promise<void> {
     const targetWeekKey = weekKey || getNextWeekKey();
-
-    // Verificar se está no período de inscrição
-    if (!isEnrollmentPeriod()) {
-      throw new BadRequestException('Só é possível cancelar inscrição durante o período de inscrição (segunda-feira)');
-    }
 
     const enrollment = await this.prisma.weeklyEnrollment.findUnique({
       where: {

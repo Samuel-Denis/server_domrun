@@ -194,6 +194,7 @@ export class UsersController {
     )
     file?: Express.Multer.File,
   ) {
+    console.log(body);
     // Converter e validar o body (quando vem como FormData, pode precisar de parse)
     const updateProfileDto = plainToInstance(UpdateProfileDto, body);
 
@@ -206,6 +207,7 @@ export class UsersController {
     if (errors.length > 0) {
       throw new BadRequestException(errors);
     }
+    console.log(updateProfileDto);
 
     return this.usersService.updateProfile(user.id, updateProfileDto, file);
   }

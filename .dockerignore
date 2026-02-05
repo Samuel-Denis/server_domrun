@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.vscode
+logs.txt
+*.log
+*.env
+npm-debug.log
+yarn.lock
+coverage
+test

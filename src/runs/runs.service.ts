@@ -9,6 +9,7 @@ import { AchievementsService } from '../users/achievements.service';
 import { RunsCalculationService } from './services/runs-calculation.service';
 import { TerritoryService } from './services/territory.service';
 import { boundaryPointsToPolygonWKT } from '../common/gis/gis.helpers';
+import { UsersService } from '../users/users.service';
 import * as turf from '@turf/turf';
 
 @Injectable()
@@ -25,6 +26,8 @@ export class RunsService {
         private readonly achievementsService: AchievementsService,
         private readonly runsCalculationService: RunsCalculationService,
         private readonly territoryService: TerritoryService,
+        @Inject(forwardRef(() => UsersService))
+        private readonly usersService: UsersService,
     ) { }
 
     /**
@@ -57,6 +60,16 @@ export class RunsService {
                 endTime,
             );
 
+            let calories = dto.calories;
+            if (calories === undefined || calories === null) {
+                const profile = await this.usersService.getUserHealthProfile(userId);
+                calories = this.runsCalculationService.calculateCalories(
+                    runStats.distance,
+                    runStats.duration,
+                    profile ?? undefined,
+                );
+            }
+
             // Criar a corrida (dados já calculados)
             const run = await this.runsRepository.saveSimpleRun({
                 userId: userId,
@@ -68,7 +81,7 @@ export class RunsService {
                 averagePace: runStats.averagePace,
                 maxSpeed: dto.maxSpeed,
                 elevationGain: dto.elevationGain,
-                calories: dto.calories,
+                calories,
                 caption: dto.caption,
             });
 
@@ -135,6 +148,26 @@ export class RunsService {
                 }
             }
 
+            const runStatsForCalories = this.runsCalculationService.calculateRunStats(
+                correctedBoundary,
+                {
+                    distance: dto.distance,
+                    duration: dto.duration,
+                    averagePace: dto.averagePace,
+                },
+                new Date(dto.capturedAt || Date.now()),
+            );
+
+            let calories = dto.calories;
+            if (calories === undefined || calories === null) {
+                const profile = await this.usersService.getUserHealthProfile(userId);
+                calories = this.runsCalculationService.calculateCalories(
+                    runStatsForCalories.distance,
+                    runStatsForCalories.duration,
+                    profile ?? undefined,
+                );
+            }
+
             // Criar território com os pontos corrigidos
             // Timeout total de 60 segundos para operação completa
             const territoryResult = await Promise.race([
@@ -142,6 +175,7 @@ export class RunsService {
                     ...dto,
                     boundary: correctedBoundary, // Usar pontos corrigidos
                     userId,
+                    calories,
                 }),
                 new Promise((_, reject) =>
                     setTimeout(() => reject(new BadRequestException('Timeout ao processar território')), 60000)
@@ -257,6 +291,13 @@ export class RunsService {
                 startTime,
             );
 
+            const profile = await this.usersService.getUserHealthProfile(userId);
+            const calories = this.runsCalculationService.calculateCalories(
+                runStats.distance,
+                runStats.duration,
+                profile ?? undefined,
+            );
+
             // Salvar corrida sem conquistar território
             await this.runsRepository.saveRun(userId, path, {
                 startTime,
@@ -264,6 +305,7 @@ export class RunsService {
                 distance: runStats.distance,
                 duration: runStats.duration,
                 averagePace: runStats.averagePace,
+                calories,
             });
 
             return { message: 'Corrida salva, mas não fechou área.', conquered: false };
@@ -280,6 +322,13 @@ export class RunsService {
             startTime,
         );
 
+        const profile = await this.usersService.getUserHealthProfile(userId);
+        const calories = this.runsCalculationService.calculateCalories(
+            runStats.distance,
+            runStats.duration,
+            profile ?? undefined,
+        );
+
         // Conquistar território e salvar a corrida
         await this.runsRepository.conquerTerritory(userId, wkt, path, {
             startTime,
@@ -287,6 +336,7 @@ export class RunsService {
             distance: runStats.distance,
             duration: runStats.duration,
             averagePace: runStats.averagePace,
+            calories,
         });
 
         return { message: 'Território conquistado!', conquered: true };

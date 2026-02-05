@@ -1,5 +1,5 @@
 {
-  "name": "backend",
+  "name": "domrun-backend",
   "version": "0.0.1",
   "description": "",
   "author": "",
@@ -21,7 +21,8 @@
     "seed:leagues": "ts-node prisma/seed-leagues.ts",
     "seed:achievements": "ts-node prisma/seed-achievements.ts",
     "seed:completo": "ts-node prisma/seed-completo-usuarios.ts",
-    "seed:admin": "ts-node prisma/seed-admin.ts"
+    "seed:admin": "ts-node prisma/seed-admin.ts",
+    "seed:weekly-room": "ts-node prisma/seed-weekly-room.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

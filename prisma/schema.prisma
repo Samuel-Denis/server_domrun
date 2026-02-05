@@ -32,6 +32,10 @@ model User {
   battleWins   Int       @default(0)
   battleLosses Int       @default(0)
 
+  weightKg Float?
+  heightCm Float?
+  age      Int?
+
   // RELACIONAMENTO COM LEAGUE (FK em vez de String)
   leagueId String?
   league   League? @relation(fields: [leagueId], references: [id], onDelete: SetNull)
